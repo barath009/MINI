@@ -11,6 +11,7 @@ import studentRoutes from './routes/studentRoutes';
 import deviceRoutes from './routes/deviceRoutes';
 import reportRoutes from './routes/reportRoutes';
 import importRoutes from './routes/importRoutes';
+import parentRoutes from './routes/parentRoutes';
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use('/api/v1/attendance', deviceRoutes); // Support POST /api/v1/attendance/
 app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/import', importRoutes);
 app.use('/api/v1/admin/import', importRoutes); // Alias for full spec compatibility
+app.use('/api/v1/parent', parentRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

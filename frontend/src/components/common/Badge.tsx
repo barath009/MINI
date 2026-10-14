@@ -2,9 +2,12 @@ import React from 'react';
 
 interface BadgeProps {
   status: string;
+  text?: string;
+  children?: React.ReactNode;
+  className?: string;
 }
 
-export const Badge: React.FC<BadgeProps> = ({ status }) => {
+export const Badge: React.FC<BadgeProps> = ({ status, text, children, className = '' }) => {
   const getBadgeStyle = (s: string) => {
     switch (s.toUpperCase()) {
       case 'PRESENT':
@@ -40,10 +43,10 @@ export const Badge: React.FC<BadgeProps> = ({ status }) => {
     <span
       className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-[10px] font-mono font-extrabold uppercase tracking-wider border ${getBadgeStyle(
         status
-      )}`}
+      )} ${className}`}
     >
       <span className="w-1.5 h-1.5 rounded-full mr-1.5 bg-current"></span>
-      {status}
+      {text || children || status}
     </span>
   );
 };

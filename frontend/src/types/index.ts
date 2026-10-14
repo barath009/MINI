@@ -1,4 +1,4 @@
-export type UserRole = 'ADMIN' | 'FACULTY' | 'STUDENT' | 'MODERATOR';
+export type UserRole = 'ADMIN' | 'FACULTY' | 'STUDENT' | 'MODERATOR' | 'PARENT';
 export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
 export type AttendanceStatus = 'PRESENT' | 'LATE' | 'ABSENT' | 'EXCUSED';
 
@@ -97,12 +97,67 @@ export interface NotificationItem {
 
 export interface AttendanceDisputeItem {
   id: string;
-  studentId: any;
-  attendanceId: any;
+  requestId?: string;
+  studentId?: any;
+  attendanceId?: any;
+  issueCategory?: string;
   reason: string;
+  description?: string;
   evidenceReference?: string;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
   submittedAt: string;
   reviewedBy?: any;
+  reviewedAt?: string;
   reviewRemark?: string;
+  attendanceDetails?: {
+    subjectName?: string;
+    subjectCode?: string;
+    date?: string;
+    recordedTime?: string;
+    status?: string;
+  };
 }
+
+export interface ParentWard {
+  wardLinkId?: string;
+  studentId: string;
+  name: string;
+  email?: string;
+  registerNumber: string;
+  rollNumber: string;
+  department?: string;
+  section?: string;
+  year?: number;
+  semester?: number;
+  relationship: string;
+  overallPercentage?: number;
+  statusBadge?: string;
+  biometricStatus?: string;
+  totalClasses?: number;
+  attendedClasses?: number;
+}
+
+export interface ParentItem {
+  id: string;
+  name: string;
+  email: string;
+  phone?: string;
+  status: UserStatus;
+  wardCount: number;
+  lastLoginAt?: string;
+  createdAt: string;
+  wards?: ParentWard[];
+}
+
+export interface TimetableEntry {
+  id: string;
+  periodNumber: number;
+  startTime: string;
+  endTime: string;
+  subjectName: string;
+  subjectCode: string;
+  facultyName: string;
+  classroom: string;
+  classType?: string;
+}
+

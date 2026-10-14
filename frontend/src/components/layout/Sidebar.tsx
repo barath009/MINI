@@ -21,6 +21,7 @@ import {
   Link as LinkIcon,
   ShieldAlert,
   FileSpreadsheet,
+  Bell,
 } from 'lucide-react';
 
 export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ isOpen = false, onClose }) => {
@@ -35,19 +36,18 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
           items: [
             { label: 'Dashboard', path: '/admin/dashboard', icon: LayoutDashboard },
             { label: 'Students', path: '/admin/students', icon: Users },
+            { label: 'Parent Management', path: '/admin/parents', icon: Users },
             { label: 'Faculty', path: '/admin/faculty', icon: UserCheck },
             { label: 'Faculty by Department', path: '/admin/faculty-departments', icon: Building },
             { label: 'Allocations', path: '/admin/allocations', icon: LinkIcon },
             { label: 'Bulk Import / Export', path: '/admin/bulk-import', icon: FileSpreadsheet },
             { label: 'Biometric Enrollment', path: '/admin/biometric', icon: Scan },
             { label: 'Account Status & Suspension', path: '/admin/user-status-control', icon: ShieldAlert },
-            
           ],
         },
         {
           category: 'ACADEMIC STRUCTURE',
           items: [
-            
             { label: 'Departments', path: '/admin/departments', icon: Building },
             { label: 'Sections', path: '/admin/sections', icon: Layers },
             { label: 'Subjects', path: '/admin/subjects', icon: BookOpen },
@@ -85,16 +85,33 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
       ];
     }
 
+    if (role === 'PARENT') {
+      return [
+        {
+          category: 'PARENT PORTAL',
+          items: [
+            { label: 'Dashboard', path: '/parent/dashboard', icon: LayoutDashboard },
+            { label: 'My Wards', path: '/parent/wards', icon: Users },
+            { label: 'Attendance History', path: '/parent/attendance', icon: CheckSquare },
+            { label: 'Attendance Analytics', path: '/parent/analytics', icon: BarChart3 },
+            { label: 'My Profile', path: '/parent/profile', icon: UserCheck },
+          ],
+        },
+      ];
+    }
+
     // STUDENT Role
     return [
       {
         category: 'STUDENT PORTAL',
         items: [
           { label: 'Dashboard', path: '/student/dashboard', icon: LayoutDashboard },
-          { label: 'My Attendance Logs', path: '/student/history', icon: CheckSquare },
-          { label: 'Analytics Breakdown', path: '/student/analytics', icon: BarChart3 },
-          { label: 'Biometric Profile', path: '/student/biometric-status', icon: Scan },
-          { label: 'Dispute Requests', path: '/student/disputes', icon: HelpCircle },
+          { label: 'My Attendance', path: '/student/attendance', icon: CheckSquare },
+          { label: 'My Timetable', path: '/student/timetable', icon: Calendar },
+          { label: 'Attendance Analytics', path: '/student/analytics', icon: BarChart3 },
+          { label: 'Notifications', path: '/student/notifications', icon: Bell },
+          { label: 'Report Attendance Issue', path: '/student/issues', icon: HelpCircle },
+          { label: 'My Profile', path: '/student/profile', icon: UserCheck },
         ],
       },
     ];

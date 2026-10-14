@@ -108,3 +108,46 @@ export const reviewDisputeSchema = z.object({
   status: z.enum(['APPROVED', 'REJECTED']),
   reviewRemark: z.string().min(3, 'Review remark is required'),
 });
+
+// Parent Management Schemas
+export const createParentSchema = z.object({
+  name: z.string().min(2, 'Parent name is required'),
+  email: z.string().email('Valid email address is required'),
+  phone: z.string().min(10, 'Valid phone number is required (at least 10 digits)'),
+  relationship: z.string().optional().default('Guardian'),
+  secondaryPhone: z.string().optional(),
+  address: z.string().optional(),
+  password: z.string().min(6, 'Password must be at least 6 characters').optional(),
+  studentIds: z.array(z.string()).optional(),
+});
+
+export const updateParentSchema = z.object({
+  name: z.string().min(2, 'Parent name is required').optional(),
+  phone: z.string().min(10, 'Phone must be at least 10 digits').optional(),
+  status: z.enum(['ACTIVE', 'INACTIVE', 'SUSPENDED']).optional(),
+});
+
+export const assignWardSchema = z.object({
+  studentId: z.string().min(1, 'Student ID is required'),
+  relationship: z.string().optional().default('Guardian'),
+});
+
+// Student Portal Schemas
+export const reportAttendanceIssueSchema = z.object({
+  attendanceId: z.string().optional().or(z.literal('')),
+  subjectId: z.string().optional().or(z.literal('')),
+  attendanceDate: z.string().optional().or(z.literal('')),
+  issueCategory: z.enum([
+    'Biometric attendance missing',
+    'Incorrect attendance status',
+    'Incorrect recorded time',
+    'Other attendance issue',
+  ]),
+  description: z.string().min(10, 'Detailed description is required (at least 10 characters)'),
+  evidenceReference: z.string().optional(),
+});
+
+export const updateStudentProfileSchema = z.object({
+  phone: z.string().min(10, 'Phone number must be at least 10 digits'),
+});
+

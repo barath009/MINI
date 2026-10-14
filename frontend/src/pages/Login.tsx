@@ -16,6 +16,7 @@ import {
   GraduationCap,
   Briefcase,
   Sparkles,
+  Users,
 } from 'lucide-react';
 
 import { formatErrorMessage } from '../utils/errorUtils';
@@ -26,7 +27,7 @@ export const Login: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [activeTab, setActiveTab] = useState<'STUDENT' | 'FACULTY' | 'ADMIN'>('ADMIN');
+  const [activeTab, setActiveTab] = useState<'STUDENT' | 'FACULTY' | 'ADMIN' | 'PARENT'>('ADMIN');
 
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -40,6 +41,7 @@ export const Login: React.FC = () => {
       const user = await login(email, password);
       if (user.role === 'ADMIN' || user.role === 'MODERATOR') navigate('/admin/dashboard');
       else if (user.role === 'FACULTY') navigate('/faculty/dashboard');
+      else if (user.role === 'PARENT') navigate('/parent/dashboard');
       else navigate('/student/dashboard');
     } catch (err: any) {
       setError(formatErrorMessage(err, 'Invalid email or password credentials.'));
@@ -48,7 +50,7 @@ export const Login: React.FC = () => {
     }
   };
 
-  const handleSelectRolePreset = (role: 'STUDENT' | 'FACULTY' | 'ADMIN') => {
+  const handleSelectRolePreset = (role: 'STUDENT' | 'FACULTY' | 'ADMIN' | 'PARENT') => {
     setActiveTab(role);
     setError('');
     if (role === 'ADMIN') {
@@ -57,6 +59,9 @@ export const Login: React.FC = () => {
     } else if (role === 'FACULTY') {
       setEmail('faculty1@bit.edu');
       setPassword('Faculty@123');
+    } else if (role === 'PARENT') {
+      setEmail('parent@example.com');
+      setPassword('Parent@123');
     } else {
       setEmail('student1@bit.edu');
       setPassword('Student@123');
@@ -96,7 +101,7 @@ export const Login: React.FC = () => {
             <label className="block text-[11px] text-slate-400 font-bold uppercase tracking-wider text-center">
               Select Portal Profession / Role
             </label>
-            <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs font-semibold">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 rounded-2xl bg-slate-950/80 border border-slate-800 text-xs font-semibold">
               <button
                 type="button"
                 onClick={() => handleSelectRolePreset('ADMIN')}
@@ -132,6 +137,18 @@ export const Login: React.FC = () => {
               >
                 <GraduationCap className="w-3.5 h-3.5" />
                 Student
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectRolePreset('PARENT')}
+                className={`py-2 px-2 rounded-xl flex items-center justify-center gap-1.5 transition-all ${
+                  activeTab === 'PARENT'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 font-extrabold'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                Parent
               </button>
             </div>
           </div>

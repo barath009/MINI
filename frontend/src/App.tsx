@@ -2,10 +2,12 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { Login } from './pages/Login';
 import { NotFound } from './pages/NotFound';
 import { BiometricKioskScanner } from './pages/public/BiometricKioskScanner';
+import { DeviceLogin } from './pages/public/DeviceLogin';
 
 // Admin Pages
 import { AdminDashboard } from './pages/admin/Dashboard';
@@ -27,6 +29,7 @@ import { AdminAudit } from './pages/admin/Audit';
 import { AdminSettings } from './pages/admin/Settings';
 import { UserStatusControl } from './pages/admin/UserStatusControl';
 import { BulkImport } from './pages/admin/BulkImport';
+import { ParentManagement } from './pages/admin/ParentManagement';
 
 // Faculty Pages
 import { FacultyDashboard } from './pages/faculty/Dashboard';
@@ -35,12 +38,22 @@ import { FacultyMyStudents } from './pages/faculty/MyStudents';
 import { FacultySessionLiveAttendance } from './pages/faculty/SessionLiveAttendance';
 import { FacultyDisputes } from './pages/faculty/Disputes';
 
+// Parent Pages
+import { ParentDashboard } from './pages/parent/ParentDashboard';
+import { ParentWards } from './pages/parent/ParentWards';
+import { ParentAttendanceHistory } from './pages/parent/ParentAttendanceHistory';
+import { ParentAnalytics } from './pages/parent/ParentAnalytics';
+import { ParentProfile } from './pages/parent/ParentProfile';
+
 // Student Pages
 import { StudentDashboard } from './pages/student/Dashboard';
 import { StudentAttendanceHistory } from './pages/student/AttendanceHistory';
+import { StudentTimetable } from './pages/student/Timetable';
 import { StudentAnalytics } from './pages/student/Analytics';
-import { StudentBiometricStatus } from './pages/student/BiometricStatus';
+import { StudentNotifications } from './pages/student/Notifications';
 import { StudentDisputes } from './pages/student/Disputes';
+import { StudentBiometricStatus } from './pages/student/BiometricStatus';
+import { StudentProfile } from './pages/student/Profile';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: string[] }> = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -49,12 +62,11 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: strin
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     if (user.role === 'ADMIN' || user.role === 'MODERATOR') return <Navigate to="/admin/dashboard" replace />;
     if (user.role === 'FACULTY') return <Navigate to="/faculty/dashboard" replace />;
+    if (user.role === 'PARENT') return <Navigate to="/parent/dashboard" replace />;
     return <Navigate to="/student/dashboard" replace />;
   }
   return <>{children}</>;
 };
-
-import { DeviceLogin } from './pages/public/DeviceLogin';
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -75,6 +87,7 @@ export const AppRoutes: React.FC = () => {
       >
         <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="students" element={<AdminStudents />} />
+        <Route path="parents" element={<ParentManagement />} />
         <Route path="faculty" element={<AdminFaculty />} />
         <Route path="faculty-departments" element={<FacultyByDepartment />} />
         <Route path="allocations" element={<AdminAllocations />} />
@@ -117,6 +130,22 @@ export const AppRoutes: React.FC = () => {
         <Route path="disputes" element={<FacultyDisputes />} />
       </Route>
 
+      {/* Parent Protected Routes */}
+      <Route
+        path="/parent"
+        element={
+          <ProtectedRoute allowedRoles={['PARENT', 'ADMIN']}>
+            <AppLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route path="dashboard" element={<ParentDashboard />} />
+        <Route path="wards" element={<ParentWards />} />
+        <Route path="attendance" element={<ParentAttendanceHistory />} />
+        <Route path="analytics" element={<ParentAnalytics />} />
+        <Route path="profile" element={<ParentProfile />} />
+      </Route>
+
       {/* Student Protected Routes */}
       <Route
         path="/student"
@@ -127,18 +156,21 @@ export const AppRoutes: React.FC = () => {
         }
       >
         <Route path="dashboard" element={<StudentDashboard />} />
+        <Route path="attendance" element={<StudentAttendanceHistory />} />
         <Route path="history" element={<StudentAttendanceHistory />} />
+        <Route path="timetable" element={<StudentTimetable />} />
         <Route path="analytics" element={<StudentAnalytics />} />
-        <Route path="biometric-status" element={<StudentBiometricStatus />} />
+        <Route path="notifications" element={<StudentNotifications />} />
+        <Route path="issues" element={<StudentDisputes />} />
         <Route path="disputes" element={<StudentDisputes />} />
+        <Route path="biometric-status" element={<StudentBiometricStatus />} />
+        <Route path="profile" element={<StudentProfile />} />
       </Route>
 
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
 };
-
-import { ThemeProvider } from './context/ThemeContext';
 
 export const App: React.FC = () => {
   return (

@@ -49,6 +49,16 @@ import {
   deleteModerator,
   updateUserStatus,
 } from '../controllers/adminController';
+import {
+  createParent,
+  getParents,
+  getParentById,
+  updateParent,
+  updateParentStatus,
+  assignWard,
+  removeWard,
+  resetParentPassword,
+} from '../controllers/adminParentController';
 import { authenticate } from '../middleware/auth';
 import { authorize } from '../middleware/rbac';
 
@@ -130,5 +140,15 @@ router.get('/moderators', authorize('ADMIN'), getModerators);
 router.post('/moderators', authorize('ADMIN'), createModerator);
 router.post('/admins', authorize('ADMIN'), createAdminUser);
 router.delete('/moderators/:id', authorize('ADMIN'), deleteModerator);
+
+// Parent Management (Admin & Moderator)
+router.post('/parents', createParent);
+router.get('/parents', getParents);
+router.get('/parents/:id', getParentById);
+router.patch('/parents/:id', updateParent);
+router.patch('/parents/:id/status', updateParentStatus);
+router.post('/parents/:id/wards', assignWard);
+router.delete('/parents/:id/wards/:studentId', removeWard);
+router.post('/parents/:id/reset-password', resetParentPassword);
 
 export default router;
