@@ -12,6 +12,8 @@ import deviceRoutes from './routes/deviceRoutes';
 import reportRoutes from './routes/reportRoutes';
 import importRoutes from './routes/importRoutes';
 import parentRoutes from './routes/parentRoutes';
+import systemTimeRoutes from './routes/systemTimeRoutes';
+import sectionRoutes from './routes/sectionRoutes';
 
 const app = express();
 
@@ -49,6 +51,9 @@ app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/import', importRoutes);
 app.use('/api/v1/admin/import', importRoutes); // Alias for full spec compatibility
 app.use('/api/v1/parent', parentRoutes);
+app.use('/api/v1/system-time', systemTimeRoutes);
+app.use('/api/v1/admin/system-time', systemTimeRoutes);
+app.use('/api/v1/sections', sectionRoutes);
 
 // Global Error Handler
 app.use(errorHandler);

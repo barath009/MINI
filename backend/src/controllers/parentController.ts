@@ -6,6 +6,8 @@ import { AttendanceRecord } from '../models/AttendanceRecord';
 import { ClassAllocation } from '../models/ClassAllocation';
 import { Timetable } from '../models/Timetable';
 import mongoose from 'mongoose';
+import { clockService } from '../services/clockService';
+import { normalizeCalendarDate } from './adminTimetableController';
 
 export const getParentDashboard = async (req: any, res: Response, next: NextFunction) => {
   try {
@@ -64,7 +66,7 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
     const excusedCount = await AttendanceRecord.countDocuments({ studentId, status: 'EXCUSED' });
 
     const totalAttended = presentCount + lateCount;
-    const overallPercentage = totalRecords > 0 ? parseFloat(((totalAttended / totalRecords) * 100).toFixed(1)) : 100.0;
+    const overallPercentage = totalRecords > 0 ? parseFloat(((totalAttended / totalRecords) * 100).toFixed(1)) : null;
 
     // 4. Subject breakdown for the selected ward
     const allocations = await ClassAllocation.find({ studentId, status: 'ACTIVE' })
@@ -83,7 +85,7 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
             subjectId: subId,
             status: { $in: ['PRESENT', 'LATE'] },
           });
-          const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : 100.0;
+          const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : null;
           return {
             subjectId: subId,
             subjectCode: alloc.subjectId.code,
@@ -92,7 +94,7 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
             totalClasses: sTotal,
             attendedClasses: sAttended,
             percentage: pct,
-            status: pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
+            status: pct === null ? 'NO_DATA' : pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
           };
         })
       )
@@ -129,7 +131,7 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
           studentId: s._id,
           status: { $in: ['PRESENT', 'LATE'] },
         });
-        const wPct = wTotal > 0 ? parseFloat(((wAttended / wTotal) * 100).toFixed(1)) : 100.0;
+        const wPct = wTotal > 0 ? parseFloat(((wAttended / wTotal) * 100).toFixed(1)) : null;
         return {
           studentId: s._id,
           name: s.userId?.name || 'Student',
@@ -139,7 +141,7 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
           section: s.sectionId?.name,
           relationship: wl.relationship,
           overallPercentage: wPct,
-          statusBadge: wPct >= 75 ? 'SAFE' : 'WARNING',
+          statusBadge: wPct === null ? 'NO_DATA' : wPct >= 75 ? 'SAFE' : 'WARNING',
         };
       })
     );
@@ -173,8 +175,8 @@ export const getParentDashboard = async (req: any, res: Response, next: NextFunc
           lateCount,
           absentCount,
           excusedCount,
-          isLowAttendance: overallPercentage < 75,
-          statusBadge: overallPercentage >= 75 ? 'SAFE' : 'WARNING',
+          isLowAttendance: overallPercentage !== null && overallPercentage < 75,
+          statusBadge: overallPercentage === null ? 'NO_DATA' : overallPercentage >= 75 ? 'SAFE' : 'WARNING',
         },
         subjectBreakdown,
         recentRecords,
@@ -207,7 +209,7 @@ export const getParentWards = async (req: any, res: Response, next: NextFunction
           studentId: s._id,
           status: { $in: ['PRESENT', 'LATE'] },
         });
-        const pct = total > 0 ? parseFloat(((attended / total) * 100).toFixed(1)) : 100.0;
+        const pct = total > 0 ? parseFloat(((attended / total) * 100).toFixed(1)) : null;
 
         return {
           studentId: s._id,
@@ -223,7 +225,7 @@ export const getParentWards = async (req: any, res: Response, next: NextFunction
           totalClasses: total,
           attendedClasses: attended,
           percentage: pct,
-          statusBadge: pct >= 75 ? 'SAFE' : 'WARNING',
+          statusBadge: pct === null ? 'NO_DATA' : pct >= 75 ? 'SAFE' : 'WARNING',
           biometricStatus: s.biometricStatus,
         };
       })
@@ -259,19 +261,23 @@ export const getWardAttendanceHistory = async (req: any, res: Response, next: Ne
 
     if (startDate || endDate) {
       query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate as string);
-      if (endDate) query.date.$lte = new Date(endDate as string);
+      if (startDate) query.date.$gte = normalizeCalendarDate(startDate as string).normalizedDate;
+      if (endDate) {
+        const e = normalizeCalendarDate(endDate as string).normalizedDate;
+        e.setUTCHours(23, 59, 59, 999);
+        query.date.$lte = e;
+      }
     } else if (month) {
-      // Month format: YYYY-MM
       const [yearStr, monthStr] = (month as string).split('-');
       const y = parseInt(yearStr, 10);
       const m = parseInt(monthStr, 10) - 1;
-      const startMonth = new Date(y, m, 1);
-      const endMonth = new Date(y, m + 1, 0, 23, 59, 59);
-      query.date = { $gte: startMonth, $lte: endMonth };
+      query.date = {
+        $gte: new Date(Date.UTC(y, m, 1)),
+        $lte: new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999)),
+      };
     }
 
-    const [records, total] = await Promise.all([
+    const [records, total, totalAll, presentAll, lateAll, absentAll] = await Promise.all([
       AttendanceRecord.find(query)
         .sort({ timestamp: -1 })
         .skip(skip)
@@ -279,27 +285,60 @@ export const getWardAttendanceHistory = async (req: any, res: Response, next: Ne
         .populate('subjectId')
         .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
         .populate('classroomId')
+        .populate('deviceId')
+        .populate('timetableId')
         .lean(),
       AttendanceRecord.countDocuments(query),
+      AttendanceRecord.countDocuments({ studentId }),
+      AttendanceRecord.countDocuments({ studentId, status: 'PRESENT' }),
+      AttendanceRecord.countDocuments({ studentId, status: 'LATE' }),
+      AttendanceRecord.countDocuments({ studentId, status: 'ABSENT' }),
     ]);
 
-    const formattedRecords = records.map((r: any) => ({
-      id: r._id,
-      date: new Date(r.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }),
-      biometricTime: new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      subjectName: r.subjectId?.name || 'Class Session',
-      subjectCode: r.subjectId?.code || 'SUB',
-      facultyName: r.facultyId?.userId?.name || 'Assigned Faculty',
-      classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
-      status: r.status,
-      recognitionMethod: r.recognitionMethod,
-      isLate: r.status === 'LATE',
-      overrideReason: r.overrideReason,
-    }));
+    const attendedAll = presentAll + lateAll;
+    const attendancePercentage = totalAll > 0 ? parseFloat(((attendedAll / totalAll) * 100).toFixed(1)) : null;
+
+    const formattedRecords = records.map((r: any) => {
+      const periodNum = r.timetableId?.periodNumber || 1;
+      const formattedDate = new Date(r.date).toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : null;
+      const devName = r.deviceId?.deviceName || r.deviceId?.deviceId || (r.recognitionMethod === 'MANUAL_OVERRIDE' ? 'Admin Override' : 'Biometric Terminal');
+
+      return {
+        id: r._id,
+        date: r.date,
+        formattedDate,
+        dateStr: new Date(r.date).toISOString().slice(0, 10),
+        periodNumber: periodNum,
+        slot: periodNum <= 3 ? 'Forenoon' : 'Afternoon',
+        startTime: r.timetableId?.startTime || '09:00',
+        endTime: r.timetableId?.endTime || '10:00',
+        biometricTime: timeStr,
+        verificationTime: timeStr,
+        subjectName: r.subjectId?.name || 'Class Session',
+        subjectCode: r.subjectId?.code || 'SUB',
+        facultyName: r.facultyId?.userId?.name || (r.facultyId as any)?.name || 'Assigned Faculty',
+        classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
+        status: r.status,
+        recognitionMethod: r.recognitionMethod,
+        deviceName: devName,
+        isLate: r.status === 'LATE',
+        isTestMode: Boolean(r.isTestMode),
+        realTimestamp: r.realTimestamp,
+        overrideReason: r.overrideReason,
+      };
+    });
 
     res.status(200).json({
       success: true,
       data: formattedRecords,
+      summary: {
+        attendancePercentage,
+        totalEligibleClasses: totalAll,
+        presentCount: attendedAll,
+        absentCount: absentAll,
+        lateCount: lateAll,
+      },
       pagination: {
         total,
         page: pageNum,
@@ -330,7 +369,7 @@ export const getWardAttendanceSummary = async (req: any, res: Response, next: Ne
         const sLate = await AttendanceRecord.countDocuments({ studentId, subjectId: subId, status: 'LATE' });
         const sAbsent = await AttendanceRecord.countDocuments({ studentId, subjectId: subId, status: 'ABSENT' });
         const sAttended = sPresent + sLate;
-        const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : 100.0;
+        const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : null;
 
         return {
           subjectId: subId,
@@ -342,7 +381,7 @@ export const getWardAttendanceSummary = async (req: any, res: Response, next: Ne
           lateClasses: sLate,
           absentClasses: sAbsent,
           percentage: pct,
-          status: pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
+          status: pct === null ? 'NO_DATA' : pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
         };
       })
     );
@@ -362,9 +401,12 @@ export const getWardTimetable = async (req: any, res: Response, next: NextFuncti
     const student = await Student.findById(studentId);
     if (!student) throw new AppError('Student profile not found.', 404);
 
+    const { date } = req.query;
+    const { normalizedDate, dayOfWeek, dateStr } = normalizeCalendarDate(date as string | undefined);
+
     const timetableRecords = await Timetable.find({
       sectionId: student.sectionId,
-      status: 'ACTIVE',
+      date: normalizedDate,
     })
       .sort({ periodNumber: 1 })
       .populate('subjectId')
@@ -372,36 +414,84 @@ export const getWardTimetable = async (req: any, res: Response, next: NextFuncti
       .populate('classroomId')
       .lean();
 
-    const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const currentDay = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][new Date().getDay()];
+    // Look up attendance records for this ward on this date
+    const dayAttendance = await AttendanceRecord.find({
+      studentId: student._id,
+      date: normalizedDate,
+    })
+      .populate('deviceId')
+      .lean();
 
-    const grouped: Record<string, any[]> = {};
-    daysOfWeek.forEach((day) => {
-      grouped[day] = [];
-    });
-
-    timetableRecords.forEach((t: any) => {
-      if (grouped[t.dayOfWeek]) {
-        grouped[t.dayOfWeek].push({
-          id: t._id,
-          periodNumber: t.periodNumber,
-          startTime: t.startTime,
-          endTime: t.endTime,
-          subjectName: t.subjectId?.name || 'Class Subject',
-          subjectCode: t.subjectId?.code || 'SUB',
-          facultyName: t.facultyId?.userId?.name || 'Assigned Faculty',
-          classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
-          classType: 'Theory',
-        });
+    const attMap = new Map<string, any>();
+    dayAttendance.forEach((rec: any) => {
+      if (rec.timetableId) {
+        attMap.set(rec.timetableId.toString(), rec);
       }
     });
+
+    const effectiveNow = clockService.getEffectiveNow();
+    const nowMinutes = effectiveNow.getHours() * 60 + effectiveNow.getMinutes();
+
+    const formattedClasses = timetableRecords.map((t: any) => {
+      const existingRecord = attMap.get(t._id.toString());
+      const [sh, sm] = (t.startTime || '09:00').split(':').map((v: string) => parseInt(v, 10));
+      const [eh, em] = (t.endTime || '10:00').split(':').map((v: string) => parseInt(v, 10));
+      const startMin = sh * 60 + sm;
+      const endMin = eh * 60 + em;
+
+      let computedStatus: string = t.status || 'ACTIVE';
+      let verificationTime: string | null = null;
+      let deviceName: string | null = null;
+
+      if (t.status === 'CANCELLED') {
+        computedStatus = 'CANCELLED';
+      } else if (existingRecord) {
+        computedStatus = existingRecord.status;
+        verificationTime = existingRecord.timestamp
+          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          : null;
+        deviceName = (existingRecord.deviceId as any)?.deviceName || (existingRecord.deviceId as any)?.deviceId || 'Biometric Scanner';
+      } else {
+        if (nowMinutes < startMin) {
+          computedStatus = 'UPCOMING';
+        } else if (nowMinutes <= endMin) {
+          computedStatus = 'PENDING';
+        } else {
+          computedStatus = 'ABSENT';
+        }
+      }
+
+      return {
+        id: t._id,
+        periodNumber: t.periodNumber,
+        slot: t.periodNumber <= 3 ? 'Forenoon' : 'Afternoon',
+        startTime: t.startTime,
+        endTime: t.endTime,
+        subjectName: t.subjectId?.name || 'Class Subject',
+        subjectCode: t.subjectId?.code || 'SUB',
+        facultyName: t.facultyId?.userId?.name || (t.facultyId as any)?.name || 'Assigned Faculty',
+        classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
+        status: computedStatus,
+        verificationTime,
+        deviceName,
+        notes: t.notes || '',
+        isCurrent: nowMinutes >= startMin && nowMinutes <= endMin,
+      };
+    });
+
+    // Backwards compatibility weekly schedule placeholder
+    const weeklySchedule: Record<string, any[]> = { [dayOfWeek]: formattedClasses };
 
     res.status(200).json({
       success: true,
       data: {
-        currentDay,
-        weeklySchedule: grouped,
-        hasPublishedTimetable: timetableRecords.length > 0,
+        date: dateStr,
+        dayOfWeek,
+        currentDay: dayOfWeek,
+        classes: formattedClasses,
+        hasClasses: formattedClasses.length > 0,
+        weeklySchedule,
+        hasPublishedTimetable: formattedClasses.length > 0,
       },
     });
   } catch (error) {

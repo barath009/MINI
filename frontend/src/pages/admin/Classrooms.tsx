@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../../services/api';
 import { Building, Plus, Clock, Users, UserCheck, Eye, X, CheckCircle, Trash2, Edit, Filter, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
@@ -110,9 +110,43 @@ export const AdminClassrooms: React.FC = () => {
     (s) => !slotFormData.departmentId || s.departmentId?._id === slotFormData.departmentId || s.departmentId === slotFormData.departmentId
   );
 
-  const filteredSubjectsForSlotModal = subjects.filter(
-    (sub) => !slotFormData.departmentId || sub.departmentId?._id === slotFormData.departmentId || sub.departmentId === slotFormData.departmentId
-  );
+  const selectedSectionForSlot = sections.find((s) => s._id === slotFormData.sectionId);
+
+  const filteredSubjectsForSlotModal = useMemo(() => {
+    const targetDeptId =
+      slotFormData.departmentId ||
+      selectedSectionForSlot?.departmentId?._id ||
+      selectedSectionForSlot?.departmentId;
+    const targetSem = selectedSectionForSlot?.semester;
+    const targetYear = selectedSectionForSlot?.year;
+
+    // Filter by department AND section semester
+    const matching = subjects.filter((sub) => {
+      const subDeptId = sub.departmentId?._id || sub.departmentId;
+      if (targetDeptId && subDeptId && subDeptId.toString() !== targetDeptId.toString()) {
+        return false;
+      }
+      if (targetSem && sub.semester && sub.semester !== targetSem) {
+        return false;
+      }
+      if (targetYear && sub.year && sub.year !== targetYear) {
+        return false;
+      }
+      return true;
+    });
+
+    if (matching.length > 0) return matching;
+
+    // Fallback: If section has no exact semester subjects in DB, fallback to department's subjects
+    if (targetDeptId) {
+      return subjects.filter((sub) => {
+        const subDeptId = sub.departmentId?._id || sub.departmentId;
+        return subDeptId && subDeptId.toString() === targetDeptId.toString();
+      });
+    }
+
+    return subjects;
+  }, [subjects, slotFormData.departmentId, selectedSectionForSlot]);
 
   // Filter classrooms by selected Dept & Section
   const displayClassrooms = classrooms.filter((c) => {
@@ -861,13 +895,22 @@ export const AdminClassrooms: React.FC = () => {
               <select
                 required
                 value={slotFormData.sectionId}
-                onChange={(e) => setSlotFormData({ ...slotFormData, sectionId: e.target.value })}
+                onChange={(e) => {
+                  const secId = e.target.value;
+                  const sec = sections.find((s) => s._id === secId);
+                  setSlotFormData({
+                    ...slotFormData,
+                    sectionId: secId,
+                    departmentId: sec?.departmentId?._id || sec?.departmentId || slotFormData.departmentId,
+                    subjectId: '',
+                  });
+                }}
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold"
               >
                 <option value="">Select Section</option>
                 {filteredSectionsForSlotModal.map((sec) => (
                   <option key={sec._id} value={sec._id}>
-                    {sec.name} ({sec.departmentId?.code})
+                    {sec.name} (Sem {sec.semester || 1})
                   </option>
                 ))}
               </select>
@@ -876,17 +919,30 @@ export const AdminClassrooms: React.FC = () => {
 
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <label className="block text-slate-400 font-semibold mb-1">Subject *</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-400 font-semibold">Subject *</label>
+                {selectedSectionForSlot?.semester && (
+                  <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/80 border border-cyan-800/80 px-1.5 py-0.2 rounded">
+                    Sem {selectedSectionForSlot.semester}
+                  </span>
+                )}
+              </div>
               <select
                 required
                 value={slotFormData.subjectId}
                 onChange={(e) => setSlotFormData({ ...slotFormData, subjectId: e.target.value })}
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-semibold"
               >
-                <option value="">Select Subject</option>
-                {filteredSubjectsForSlotModal.map((sub) => (
+                <option value="">
+                  {filteredSubjectsForSlotModal.length === 0
+                    ? slotFormData.sectionId
+                      ? 'No subjects mapped for this Section & Semester'
+                      : 'Select Department & Section first'
+                    : 'Select Subject'}
+                </option>
+                {filteredSubjectsForSlotModal.map((sub: any) => (
                   <option key={sub._id} value={sub._id}>
-                    {sub.code} - {sub.name}
+                    [{sub.code}] {sub.name} (Sem {sub.semester})
                   </option>
                 ))}
               </select>

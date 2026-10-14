@@ -15,6 +15,11 @@ import {
   confirmAllocationImport,
   previewSubjectImport,
   confirmSubjectImport,
+  getSectionTemplate,
+  previewSectionImport,
+  confirmSectionImport,
+  exportSections,
+  getSectionImportHistory,
   exportStudents,
   exportFaculty,
   exportSubjects,
@@ -59,6 +64,8 @@ router.get('/templates/students', getStudentTemplate);
 router.get('/templates/faculty', getFacultyTemplate);
 router.get('/templates/allocations', getAllocationTemplate);
 router.get('/templates/subjects', getSubjectTemplate);
+router.get('/templates/sections', getSectionTemplate);
+router.get('/sections/template', getSectionTemplate);
 
 // Student Import
 router.post('/students/preview', upload.single('file'), previewStudentImport);
@@ -76,10 +83,19 @@ router.post('/allocations/confirm/:jobId', confirmAllocationImport);
 router.post('/subjects/preview', upload.single('file'), previewSubjectImport);
 router.post('/subjects/confirm/:jobId', confirmSubjectImport);
 
+// Section Import
+router.post('/sections/preview', upload.single('file'), previewSectionImport);
+router.post('/sections/confirm/:jobId', confirmSectionImport);
+router.post('/sections/confirm', confirmSectionImport);
+router.get('/sections/history', getSectionImportHistory);
+router.get('/sections/:jobId/errors', downloadErrorReport);
+
 // Exports
 router.get('/export/students', exportStudents);
 router.get('/export/faculty', exportFaculty);
 router.get('/export/subjects', exportSubjects);
+router.get('/export/sections', exportSections);
+router.get('/sections/export', exportSections);
 
 // History, Details, Errors, and Cancel
 router.get('/history', getImportHistory);

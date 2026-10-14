@@ -1854,6 +1854,79 @@ export const updatePreviewRow = async (req: any, res: Response, next: NextFuncti
 
       job.validRows = validCount;
       job.invalidRows = invalidCount;
+    } else if (job.importType === 'SECTIONS') {
+      const departments = await Department.find({});
+      const deptMap = new Map<string, any>();
+      departments.forEach(d => deptMap.set(d.code.toUpperCase(), d));
+
+      const existingSections = await Section.find({}).populate('departmentId');
+      const existingSectionKeys = new Set<string>();
+      existingSections.forEach((s: any) => {
+        const deptCode = s.departmentId?.code?.toUpperCase() || '';
+        const key = `${deptCode}__${s.academicYear}__${s.year}__${s.semester}__${s.name.trim().toUpperCase()}`;
+        existingSectionKeys.add(key);
+      });
+
+      job.previewData[rowIndex].data = mergedData;
+      const fileSectionKeys = new Set<string>();
+      let validCount = 0, invalidCount = 0, duplicateCount = 0;
+
+      for (let i = 0; i < job.previewData.length; i++) {
+        const r = job.previewData[i];
+        const errors: string[] = [];
+
+        const deptCode = cellStr(r.data.department_code || r.data.deptCode).toUpperCase();
+        const academicYear = cellStr(r.data.academic_year || r.data.academicYear);
+        const year = Number(r.data.year);
+        const semester = Number(r.data.semester);
+        const sectionName = cellStr(r.data.section_name || r.data.sectionName || r.data.name);
+        const capacity = r.data.capacity ? Number(r.data.capacity) : 60;
+        const statusRaw = cellStr(r.data.status).toUpperCase() || 'ACTIVE';
+
+        if (!deptCode) {
+          errors.push('department_code is required.');
+        } else if (!deptMap.has(deptCode)) {
+          errors.push(`Unknown department code: "${deptCode}". Department must exist in system.`);
+        } else {
+          r.data.departmentId = deptMap.get(deptCode)._id;
+        }
+
+        if (!academicYear) errors.push('academic_year is required.');
+        if (!year || isNaN(year) || year < 1 || year > 4) errors.push('year must be an integer between 1 and 4.');
+        if (!semester || isNaN(semester) || semester < 1 || semester > 8) errors.push('semester must be an integer between 1 and 8.');
+        if (!sectionName) errors.push('section_name is required.');
+        if (capacity < 1 || isNaN(capacity)) errors.push('capacity must be a positive integer.');
+        if (!['ACTIVE', 'INACTIVE'].includes(statusRaw)) errors.push('status must be ACTIVE or INACTIVE.');
+
+        let isDuplicate = false;
+        const naturalKey = `${deptCode}__${academicYear}__${year}__${semester}__${sectionName.toUpperCase()}`;
+        if (fileSectionKeys.has(naturalKey)) {
+          errors.push(`Duplicate section "${sectionName}" within uploaded file.`);
+          isDuplicate = true;
+        } else {
+          fileSectionKeys.add(naturalKey);
+        }
+
+        if (existingSectionKeys.has(naturalKey)) {
+          errors.push(`Section "${sectionName}" already exists in ${deptCode} for Year ${year}, Sem ${semester}.`);
+          isDuplicate = true;
+        }
+
+        const rowStatus = errors.some(e => !e.toLowerCase().includes('duplicate') && !e.toLowerCase().includes('already exists'))
+          ? 'INVALID'
+          : isDuplicate ? 'DUPLICATE' : 'VALID';
+
+        r.errors = errors;
+        r.status = rowStatus;
+
+        if (rowStatus === 'VALID') validCount++;
+        else if (rowStatus === 'DUPLICATE') duplicateCount++;
+        else invalidCount++;
+      }
+
+      job.validRows = validCount;
+      job.invalidRows = invalidCount;
+      job.duplicateRows = duplicateCount;
     }
 
     job.markModified('previewData');
@@ -1874,4 +1947,398 @@ export const updatePreviewRow = async (req: any, res: Response, next: NextFuncti
       },
     });
   } catch (err) { next(err); }
+};
+
+// ─── Section Bulk Import & Export ─────────────────────────────────────────────
+
+export const getSectionTemplate = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const format = req.query.format === 'csv' ? 'csv' : 'xlsx';
+    const wb = XLSX.utils.book_new();
+
+    const headers = [
+      'department_code',
+      'academic_year',
+      'year',
+      'semester',
+      'section_name',
+      'capacity',
+      'status',
+    ];
+
+    const samples = [
+      ['MTRS', '2026-2027', '3', '5', 'MZ-A', '60', 'ACTIVE'],
+      ['MTRS', '2026-2027', '3', '5', 'MZ-B', '60', 'ACTIVE'],
+      ['CSE', '2026-2027', '2', '3', 'CS-A', '60', 'ACTIVE'],
+      ['CSE', '2026-2027', '2', '3', 'CS-B', '60', 'ACTIVE'],
+      ['ECE', '2026-2027', '1', '1', 'EC-A', '60', 'ACTIVE'],
+    ];
+
+    const wsData = [headers, ...samples];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    ws['!cols'] = [
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 8 },
+      { wch: 10 },
+      { wch: 16 },
+      { wch: 12 },
+      { wch: 12 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Sections');
+
+    if (format === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=BIT_Section_Import_Template.csv');
+      return res.status(200).send(csv);
+    }
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=BIT_Section_Import_Template.xlsx');
+    res.status(200).send(buffer);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const previewSectionImport = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) throw new AppError('No file uploaded. Please upload a .xlsx or .csv file.', 400);
+
+    const wb = parseWorkbook(req.file.buffer);
+    const rawRows = sheetToRows(wb);
+
+    if (rawRows.length === 0) throw new AppError('The uploaded file is empty.', 400);
+    if (rawRows.length > MAX_ROWS) {
+      throw new AppError(`File exceeds maximum limit of ${MAX_ROWS} rows. Found: ${rawRows.length}.`, 400);
+    }
+
+    const reqCols = ['department_code', 'academic_year', 'year', 'semester', 'section_name'];
+    const missingHeaders = checkRequiredColumns(rawRows[0], reqCols);
+    if (missingHeaders.length > 0) {
+      throw new AppError(`Missing required columns: ${missingHeaders.join(', ')}`, 400);
+    }
+
+    const departments = await Department.find({});
+    const deptMap = new Map<string, any>();
+    departments.forEach(d => deptMap.set(d.code.toUpperCase(), d));
+
+    const existingSections = await Section.find({}).populate('departmentId');
+    const existingSectionKeys = new Set<string>();
+    existingSections.forEach((s: any) => {
+      const deptCode = s.departmentId?.code?.toUpperCase() || '';
+      const key = `${deptCode}__${s.academicYear}__${s.year}__${s.semester}__${s.name.trim().toUpperCase()}`;
+      existingSectionKeys.add(key);
+    });
+
+    const fileSectionKeys = new Set<string>();
+    const previewRows: IImportPreviewRow[] = [];
+    const rowErrors: IImportError[] = [];
+
+    let validCount = 0;
+    let invalidCount = 0;
+    let duplicateCount = 0;
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const rowNum = i + 2;
+      const raw = rawRows[i];
+      const errors: string[] = [];
+
+      const deptCode = cellStr(raw.department_code || raw.Department_Code).toUpperCase();
+      const academicYear = cellStr(raw.academic_year || raw.Academic_Year);
+      const yearStr = cellStr(raw.year || raw.Year);
+      const semesterStr = cellStr(raw.semester || raw.Semester);
+      const sectionName = cellStr(raw.section_name || raw.Section_Name);
+      const capacityStr = cellStr(raw.capacity || raw.Capacity);
+      const statusRaw = cellStr(raw.status || raw.Status).toUpperCase();
+
+      if (!deptCode) {
+        errors.push('department_code is required.');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'department_code', errorCode: 'REQUIRED', errorMessage: 'department_code is required.' });
+      } else if (!deptMap.has(deptCode)) {
+        errors.push(`Unknown department code: "${deptCode}". Department must exist in system.`);
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'department_code', errorCode: 'NOT_FOUND', errorMessage: `Unknown department code: "${deptCode}".` });
+      }
+
+      if (!academicYear) {
+        errors.push('academic_year is required (e.g. 2026-2027).');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'academic_year', errorCode: 'REQUIRED', errorMessage: 'academic_year is required.' });
+      }
+
+      const year = parseInt(yearStr, 10);
+      if (isNaN(year) || year < 1 || year > 4) {
+        errors.push('year must be an integer between 1 and 4.');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'year', errorCode: 'INVALID_RANGE', errorMessage: 'year must be between 1 and 4.' });
+      }
+
+      const semester = parseInt(semesterStr, 10);
+      if (isNaN(semester) || semester < 1 || semester > 8) {
+        errors.push('semester must be an integer between 1 and 8.');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'semester', errorCode: 'INVALID_RANGE', errorMessage: 'semester must be between 1 and 8.' });
+      }
+
+      if (!sectionName) {
+        errors.push('section_name is required.');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'section_name', errorCode: 'REQUIRED', errorMessage: 'section_name is required.' });
+      }
+
+      let capacity = 60;
+      if (capacityStr) {
+        const cap = parseInt(capacityStr, 10);
+        if (isNaN(cap) || cap < 1) {
+          errors.push('capacity must be a valid positive integer.');
+          rowErrors.push({ rowNumber: rowNum, fieldName: 'capacity', errorCode: 'INVALID_CAPACITY', errorMessage: 'capacity must be a positive integer.' });
+        } else {
+          capacity = cap;
+        }
+      }
+
+      let status: 'ACTIVE' | 'INACTIVE' = 'ACTIVE';
+      if (statusRaw) {
+        if (!['ACTIVE', 'INACTIVE'].includes(statusRaw)) {
+          errors.push('status must be either ACTIVE or INACTIVE.');
+          rowErrors.push({ rowNumber: rowNum, fieldName: 'status', errorCode: 'INVALID_STATUS', errorMessage: 'status must be ACTIVE or INACTIVE.' });
+        } else {
+          status = statusRaw as 'ACTIVE' | 'INACTIVE';
+        }
+      }
+
+      let isDuplicate = false;
+      const naturalKey = `${deptCode}__${academicYear}__${year}__${semester}__${sectionName.toUpperCase()}`;
+
+      if (fileSectionKeys.has(naturalKey)) {
+        errors.push(`Duplicate section "${sectionName}" within uploaded file for ${deptCode} Year ${year} Sem ${semester}.`);
+        isDuplicate = true;
+      } else {
+        fileSectionKeys.add(naturalKey);
+      }
+
+      if (existingSectionKeys.has(naturalKey)) {
+        errors.push(`Section "${sectionName}" already exists in ${deptCode} for Year ${year}, Sem ${semester} (${academicYear}).`);
+        isDuplicate = true;
+      }
+
+      let rowStatus: 'VALID' | 'INVALID' | 'DUPLICATE' = 'VALID';
+      if (errors.some(e => !e.toLowerCase().includes('duplicate') && !e.toLowerCase().includes('already exists'))) {
+        rowStatus = 'INVALID';
+        invalidCount++;
+      } else if (isDuplicate) {
+        rowStatus = 'DUPLICATE';
+        duplicateCount++;
+      } else {
+        validCount++;
+      }
+
+      previewRows.push({
+        rowNumber: rowNum,
+        data: {
+          department_code: deptCode,
+          departmentId: deptMap.get(deptCode)?._id,
+          academic_year: academicYear,
+          year,
+          semester,
+          section_name: sectionName,
+          capacity,
+          status,
+        },
+        status: rowStatus,
+        errors,
+      });
+    }
+
+    const job = await ImportJob.create({
+      importType: 'SECTIONS',
+      uploadedFilename: req.file.originalname,
+      uploadedBy: req.user._id,
+      totalRows: rawRows.length,
+      validRows: validCount,
+      invalidRows: invalidCount,
+      duplicateRows: duplicateCount,
+      importedRows: 0,
+      skippedRows: 0,
+      status: 'PREVIEW',
+      rowErrors,
+      previewData: previewRows,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        jobId: job._id,
+        totalRows: rawRows.length,
+        validRows: validCount,
+        invalidRows: invalidCount,
+        duplicateRows: duplicateCount,
+        summary: {
+          totalRows: rawRows.length,
+          validRows: validCount,
+          invalidRows: invalidCount,
+          duplicateRows: duplicateCount,
+        },
+        previewRows,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const confirmSectionImport = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const jobId = req.params.jobId || req.body.jobId;
+    const { skipDuplicates = true } = req.body;
+
+    if (!jobId) throw new AppError('Job ID is required for confirmation.', 400);
+
+    const job = await ImportJob.findById(jobId);
+    if (!job) throw new AppError('Import job not found.', 404);
+    if (job.status !== 'PREVIEW') {
+      throw new AppError(`Import job is not in preview state (current: ${job.status}). Repeated confirmation prevented.`, 400);
+    }
+
+    let importedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const row of job.previewData) {
+      if (row.status === 'INVALID') {
+        skippedCount++;
+        continue;
+      }
+      if (row.status === 'DUPLICATE') {
+        if (skipDuplicates) {
+          skippedCount++;
+          continue;
+        }
+      }
+
+      const d = row.data;
+      if (!d.departmentId || !d.section_name) {
+        skippedCount++;
+        continue;
+      }
+
+      try {
+        await Section.findOneAndUpdate(
+          {
+            departmentId: d.departmentId,
+            academicYear: d.academic_year,
+            year: d.year,
+            semester: d.semester,
+            name: d.section_name.trim(),
+          },
+          {
+            departmentId: d.departmentId,
+            academicYear: d.academic_year,
+            year: d.year,
+            semester: d.semester,
+            name: d.section_name.trim(),
+            capacity: d.capacity || 60,
+            status: d.status || 'ACTIVE',
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        importedCount++;
+      } catch (err) {
+        failedCount++;
+      }
+    }
+
+    job.status = 'COMPLETED';
+    job.importedRows = importedCount;
+    job.skippedRows = skippedCount;
+    job.completedAt = new Date();
+    await job.save();
+
+    await createAuditLog(
+      req.user._id,
+      'IMPORT_SECTIONS',
+      'Section',
+      job._id.toString(),
+      { total: job.totalRows, imported: importedCount, skipped: skippedCount, failed: failedCount },
+      req.ip
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${importedCount} section(s) imported successfully.`,
+      data: {
+        totalRows: job.totalRows,
+        importedRows: importedCount,
+        skippedRows: skippedCount,
+        failedRows: failedCount,
+        jobId: job._id,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const exportSections = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { department_code, departmentId, academic_year, academicYear, year, semester, status, format = 'xlsx' } = req.query;
+
+    const query: any = {};
+    const acadYear = academic_year || academicYear;
+    if (acadYear && acadYear !== 'ALL') query.academicYear = acadYear;
+    if (year && year !== 'ALL') query.year = Number(year);
+    if (semester && semester !== 'ALL') query.semester = Number(semester);
+    if (status && status !== 'ALL') query.status = status;
+
+    if (departmentId && departmentId !== 'ALL') {
+      query.departmentId = departmentId;
+    } else if (department_code && department_code !== 'ALL') {
+      const dept = await Department.findOne({ code: (department_code as string).toUpperCase() });
+      if (dept) query.departmentId = dept._id;
+    }
+
+    const sections = await Section.find(query)
+      .populate('departmentId')
+      .sort({ departmentId: 1, year: 1, semester: 1, name: 1 });
+
+    const rows = sections.map((s: any) => ({
+      department_code: s.departmentId?.code || '',
+      department_name: s.departmentId?.name || '',
+      academic_year: s.academicYear,
+      year: s.year,
+      semester: s.semester,
+      section_name: s.name,
+      capacity: s.capacity || 60,
+      status: s.status || 'ACTIVE',
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, 'Sections');
+
+    if (format === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', `attachment; filename=BIT_Sections_Export_${Date.now()}.csv`);
+      return res.status(200).send(csv);
+    }
+
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=BIT_Sections_Export_${Date.now()}.xlsx`);
+    res.status(200).send(buffer);
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getSectionImportHistory = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const jobs = await ImportJob.find({ importType: 'SECTIONS' })
+      .sort({ createdAt: -1 })
+      .populate('uploadedBy', 'name email');
+    res.status(200).json({ success: true, data: jobs });
+  } catch (err) {
+    next(err);
+  }
 };

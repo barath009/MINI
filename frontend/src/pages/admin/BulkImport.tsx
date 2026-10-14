@@ -24,9 +24,10 @@ import {
   RotateCcw,
   BookOpen,
   Building,
+  Layers,
 } from 'lucide-react';
 
-type TabType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'SUBJECTS' | 'EXPORT' | 'HISTORY';
+type TabType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'SUBJECTS' | 'SECTIONS' | 'EXPORT' | 'HISTORY';
 
 export const BulkImport: React.FC = () => {
   const navigate = useNavigate();
@@ -70,9 +71,11 @@ export const BulkImport: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Export filters
-  const [exportType, setExportType] = useState<'STUDENTS' | 'FACULTY' | 'SUBJECTS'>('STUDENTS');
+  const [exportType, setExportType] = useState<'STUDENTS' | 'FACULTY' | 'SUBJECTS' | 'SECTIONS'>('STUDENTS');
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv'>('xlsx');
   const [exportYear, setExportYear] = useState<string>('');
+  const [exportSemester, setExportSemester] = useState<string>('');
+  const [exportAcademicYear, setExportAcademicYear] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('ACTIVE');
   const [exportDept, setExportDept] = useState<string>('');
   const [exporting, setExporting] = useState(false);
@@ -88,7 +91,7 @@ export const BulkImport: React.FC = () => {
 
   useEffect(() => {
     const tab = searchParams.get('tab')?.toUpperCase() as TabType;
-    if (tab && ['STUDENTS', 'FACULTY', 'ALLOCATIONS', 'SUBJECTS', 'EXPORT', 'HISTORY'].includes(tab)) {
+    if (tab && ['STUDENTS', 'FACULTY', 'ALLOCATIONS', 'SUBJECTS', 'SECTIONS', 'EXPORT', 'HISTORY'].includes(tab)) {
       setActiveTab(tab);
     }
     const dept = searchParams.get('dept');
@@ -177,6 +180,9 @@ export const BulkImport: React.FC = () => {
       } else if (activeTab === 'SUBJECTS') {
         endpoint = '/import/templates/subjects';
         filename = 'subjects_template.xlsx';
+      } else if (activeTab === 'SECTIONS') {
+        endpoint = '/import/templates/sections';
+        filename = 'sections_template.xlsx';
       }
 
       const res = await api.get(endpoint, { responseType: 'blob' });
@@ -211,6 +217,7 @@ export const BulkImport: React.FC = () => {
           formData.append('defaultDepartmentId', selectedDeptForSubject);
         }
       }
+      if (activeTab === 'SECTIONS') endpoint = '/import/sections/preview';
 
       const res = await api.post(endpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -255,6 +262,7 @@ export const BulkImport: React.FC = () => {
       if (activeTab === 'FACULTY') endpoint = `/import/faculty/confirm/${previewData.jobId}`;
       if (activeTab === 'ALLOCATIONS') endpoint = `/import/allocations/confirm/${previewData.jobId}`;
       if (activeTab === 'SUBJECTS') endpoint = `/import/subjects/confirm/${previewData.jobId}`;
+      if (activeTab === 'SECTIONS') endpoint = `/import/sections/confirm/${previewData.jobId}`;
 
       const res = await api.post(endpoint, {
         skipDuplicates: true,
@@ -339,6 +347,7 @@ export const BulkImport: React.FC = () => {
       let endpoint = '/import/export/students';
       if (exportType === 'FACULTY') endpoint = '/import/export/faculty';
       if (exportType === 'SUBJECTS') endpoint = '/import/export/subjects';
+      if (exportType === 'SECTIONS') endpoint = '/import/export/sections';
 
       const params = new URLSearchParams();
       params.append('format', exportFormat);
@@ -347,6 +356,12 @@ export const BulkImport: React.FC = () => {
         if (exportStatus) params.append('status', exportStatus);
       } else if (exportType === 'SUBJECTS') {
         if (exportDept) params.append('departmentId', exportDept);
+      } else if (exportType === 'SECTIONS') {
+        if (exportDept) params.append('departmentId', exportDept);
+        if (exportAcademicYear) params.append('academicYear', exportAcademicYear);
+        if (exportYear) params.append('year', exportYear);
+        if (exportSemester) params.append('semester', exportSemester);
+        if (exportStatus) params.append('status', exportStatus);
       }
 
       const res = await api.get(`${endpoint}?${params.toString()}`, { responseType: 'blob' });
@@ -452,6 +467,17 @@ export const BulkImport: React.FC = () => {
           Import Subjects
         </button>
         <button
+          onClick={() => setActiveTab('SECTIONS')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+            activeTab === 'SECTIONS'
+              ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/20'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Import Sections
+        </button>
+        <button
           onClick={() => setActiveTab('EXPORT')}
           className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
             activeTab === 'EXPORT'
@@ -513,10 +539,14 @@ export const BulkImport: React.FC = () => {
                       ? 'faculty_template.xlsx'
                       : activeTab === 'ALLOCATIONS'
                       ? 'allocation_template.xlsx'
-                      : 'subjects_template.xlsx'}
+                      : activeTab === 'SUBJECTS'
+                      ? 'subjects_template.xlsx'
+                      : 'sections_template.xlsx'}
                   </p>
                   <p className="text-slate-400">
-                    {activeTab === 'SUBJECTS'
+                    {activeTab === 'SECTIONS'
+                      ? 'Standard fields: department_code (Req), academic_year (Req), year (1-4), semester (1-8), section_name (Req), capacity (def 60), status (ACTIVE/INACTIVE).'
+                      : activeTab === 'SUBJECTS'
                       ? 'Standard fields: subject_code, subject_name, department_code, semester (1-8), credits.'
                       : 'Preserves leading zeros on register numbers and phone numbers.'}
                   </p>
@@ -878,6 +908,17 @@ export const BulkImport: React.FC = () => {
                             <th className="py-2.5 px-3">Credits</th>
                           </>
                         )}
+                        {activeTab === 'SECTIONS' && (
+                          <>
+                            <th className="py-2.5 px-3">Dept Code</th>
+                            <th className="py-2.5 px-3">Academic Year</th>
+                            <th className="py-2.5 px-3">Year</th>
+                            <th className="py-2.5 px-3">Semester</th>
+                            <th className="py-2.5 px-3">Section Name</th>
+                            <th className="py-2.5 px-3">Capacity</th>
+                            <th className="py-2.5 px-3">Status</th>
+                          </>
+                        )}
                         <th className="py-2.5 px-3">Validation Message</th>
                         <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
@@ -1206,6 +1247,113 @@ export const BulkImport: React.FC = () => {
                                 </>
                               )}
 
+                              {activeTab === 'SECTIONS' && (
+                                <>
+                                  <td className="py-2 px-3 font-mono font-bold text-cyan-400">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.department_code || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, department_code: e.target.value.toUpperCase() })}
+                                        className="w-20 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono uppercase"
+                                        placeholder="CSE"
+                                      />
+                                    ) : (
+                                      r.data.department_code
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.academic_year || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, academic_year: e.target.value })}
+                                        className="w-28 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                        placeholder="2026-2027"
+                                      />
+                                    ) : (
+                                      r.data.academic_year
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={4}
+                                        value={editingRowData.year ?? 1}
+                                        onChange={e => setEditingRowData({ ...editingRowData, year: parseInt(e.target.value, 10) || 1 })}
+                                        className="w-16 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      />
+                                    ) : (
+                                      `Year ${r.data.year}`
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={8}
+                                        value={editingRowData.semester ?? 1}
+                                        onChange={e => setEditingRowData({ ...editingRowData, semester: parseInt(e.target.value, 10) || 1 })}
+                                        className="w-16 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      />
+                                    ) : (
+                                      `Sem ${r.data.semester}`
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono font-bold text-white">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.section_name || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, section_name: e.target.value.toUpperCase() })}
+                                        className="w-24 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono uppercase"
+                                        placeholder="A"
+                                      />
+                                    ) : (
+                                      r.data.section_name
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        value={editingRowData.capacity ?? 60}
+                                        onChange={e => setEditingRowData({ ...editingRowData, capacity: parseInt(e.target.value, 10) || 60 })}
+                                        className="w-16 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      />
+                                    ) : (
+                                      `${r.data.capacity ?? 60}`
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono">
+                                    {isEditing ? (
+                                      <select
+                                        value={editingRowData.status || 'ACTIVE'}
+                                        onChange={e => setEditingRowData({ ...editingRowData, status: e.target.value })}
+                                        className="px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      >
+                                        <option value="ACTIVE">ACTIVE</option>
+                                        <option value="INACTIVE">INACTIVE</option>
+                                      </select>
+                                    ) : (
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                          r.data.status === 'INACTIVE'
+                                            ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                                            : 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                        }`}
+                                      >
+                                        {r.data.status || 'ACTIVE'}
+                                      </span>
+                                    )}
+                                  </td>
+                                </>
+                              )}
+
                               <td className="py-2 px-3 text-[11px]">
                                 {r.errors && r.errors.length > 0 ? (
                                   <span className="text-rose-400">{r.errors.join('; ')}</span>
@@ -1330,6 +1478,23 @@ export const BulkImport: React.FC = () => {
                 </div>
               )}
 
+              {activeTab === 'SECTIONS' && (
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-cyan-400" />
+                    <span>
+                      Class sections successfully imported and configured.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => navigate('/admin/sections')}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs"
+                  >
+                    View Sections Directory &rarr;
+                  </button>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => {
@@ -1369,6 +1534,7 @@ export const BulkImport: React.FC = () => {
                 <option value="STUDENTS">Students Directory</option>
                 <option value="FACULTY">Faculty Accounts</option>
                 <option value="SUBJECTS">Courses &amp; Subjects</option>
+                <option value="SECTIONS">Class Sections</option>
               </select>
             </div>
 
@@ -1432,6 +1598,79 @@ export const BulkImport: React.FC = () => {
                   ))}
                 </select>
               </div>
+            )}
+
+            {exportType === 'SECTIONS' && (
+              <>
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Department Filter</label>
+                  <select
+                    value={exportDept}
+                    onChange={e => setExportDept(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+                  >
+                    <option value="">All Departments</option>
+                    {departmentsList.map(dept => (
+                      <option key={dept._id} value={dept._id}>
+                        {dept.name} ({dept.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Academic Year</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 2026-2027"
+                    value={exportAcademicYear}
+                    onChange={e => setExportAcademicYear(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Year of Study Filter</label>
+                  <select
+                    value={exportYear}
+                    onChange={e => setExportYear(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+                  >
+                    <option value="">All Years</option>
+                    <option value="1">Year 1</option>
+                    <option value="2">Year 2</option>
+                    <option value="3">Year 3</option>
+                    <option value="4">Year 4</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Semester Filter</label>
+                  <select
+                    value={exportSemester}
+                    onChange={e => setExportSemester(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+                  >
+                    <option value="">All Semesters</option>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                      <option key={s} value={s}>Semester {s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Status Filter</label>
+                  <select
+                    value={exportStatus}
+                    onChange={e => setExportStatus(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+                  >
+                    <option value="ACTIVE">ACTIVE Only</option>
+                    <option value="INACTIVE">INACTIVE</option>
+                    <option value="">All Statuses</option>
+                  </select>
+                </div>
+              </>
             )}
           </div>
 
@@ -1509,6 +1748,8 @@ export const BulkImport: React.FC = () => {
                                 ? 'bg-blue-950 text-blue-400 border border-blue-800'
                                 : job.importType === 'SUBJECTS'
                                 ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                                : job.importType === 'SECTIONS'
+                                ? 'bg-purple-950 text-purple-400 border border-purple-800'
                                 : 'bg-indigo-950 text-indigo-400 border border-indigo-800'
                             }`}
                           >

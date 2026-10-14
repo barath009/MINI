@@ -4,6 +4,8 @@ export type SessionStatus = 'SCHEDULED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 
 export interface IAttendanceSession extends Document {
   sessionId: string;
+  timetableId?: mongoose.Types.ObjectId;
+  periodNumber?: number;
   subjectId?: mongoose.Types.ObjectId;
   facultyId: mongoose.Types.ObjectId;
   sectionId?: mongoose.Types.ObjectId;
@@ -22,6 +24,8 @@ export interface IAttendanceSession extends Document {
 const AttendanceSessionSchema: Schema = new Schema(
   {
     sessionId: { type: String, required: true, unique: true, trim: true },
+    timetableId: { type: Schema.Types.ObjectId, ref: 'Timetable' },
+    periodNumber: { type: Number },
     subjectId: { type: Schema.Types.ObjectId, ref: 'Subject' },
     facultyId: { type: Schema.Types.ObjectId, ref: 'Faculty', required: true },
     sectionId: { type: Schema.Types.ObjectId, ref: 'Section' },
@@ -39,5 +43,7 @@ const AttendanceSessionSchema: Schema = new Schema(
 
 AttendanceSessionSchema.index({ classroomId: 1, date: 1, status: 1 });
 AttendanceSessionSchema.index({ facultyId: 1, date: 1 });
+AttendanceSessionSchema.index({ timetableId: 1, date: 1 }, { sparse: true });
+AttendanceSessionSchema.index({ sectionId: 1, date: 1 });
 
 export const AttendanceSession = mongoose.model<IAttendanceSession>('AttendanceSession', AttendanceSessionSchema);

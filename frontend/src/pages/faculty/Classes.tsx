@@ -1,34 +1,68 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { api } from '../../services/api';
 import { useSocket } from '../../context/SocketContext';
+import { useSystemClock } from '../../context/SystemClockContext';
 import { Badge } from '../../components/common/Badge';
-import { BookOpen, Clock, CheckSquare, Calendar, MapPin, Users, Sparkles, Building } from 'lucide-react';
+import {
+  BookOpen,
+  Clock,
+  CheckSquare,
+  Calendar,
+  MapPin,
+  Users,
+  Sparkles,
+  Building,
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  AlertCircle,
+  Scan,
+  CheckCircle2,
+} from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-const WEEKDAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 
 export const FacultyClasses: React.FC = () => {
   const { socket } = useSocket();
-  const [timetableData, setTimetableData] = useState<any>(null);
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [selectedDay, setSelectedDay] = useState<string>('MONDAY');
+  const { effectiveDate } = useSystemClock();
+
+  // Selected date defaults to effective system date
+  const initialDateStr = useMemo(() => {
+    const y = effectiveDate.getFullYear();
+    const m = String(effectiveDate.getMonth() + 1).padStart(2, '0');
+    const d = String(effectiveDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
+
+  const [selectedDate, setSelectedDate] = useState<string>(initialDateStr);
+  const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchTimetableAndSessions = () => {
-    Promise.all([
-      api.get('/faculty/timetable'),
-      api.get('/admin/sessions'),
-    ])
-      .then(([ttRes, sessRes]) => {
-        if (ttRes.data.success) {
-          setTimetableData(ttRes.data.data);
-          const today = ttRes.data.data.currentDay;
-          if (WEEKDAYS.includes(today)) {
-            setSelectedDay(today);
-          }
-        }
-        if (sessRes.data.success) {
-          setSessions(sessRes.data.data);
+  // Derived date display
+  const selectedDateObj = useMemo(() => {
+    if (!selectedDate) return new Date();
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d));
+  }, [selectedDate]);
+
+  const fullFormattedDate = useMemo(() => {
+    return selectedDateObj.toLocaleDateString('en-US', {
+      timeZone: 'UTC',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  }, [selectedDateObj]);
+
+  const fetchFacultySchedule = () => {
+    if (!selectedDate) return;
+    setLoading(true);
+
+    api
+      .get(`/faculty/timetable?date=${selectedDate}`)
+      .then((res) => {
+        if (res.data.success && res.data.data) {
+          setData(res.data.data);
         }
       })
       .catch((err) => console.error(err))
@@ -36,178 +70,228 @@ export const FacultyClasses: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchTimetableAndSessions();
-  }, []);
+    fetchFacultySchedule();
+  }, [selectedDate]);
 
   // Real-time socket sync
   useEffect(() => {
     if (!socket) return;
     const handleUpdate = () => {
-      fetchTimetableAndSessions();
+      fetchFacultySchedule();
     };
-    socket.on('TIMETABLE_UPDATED', handleUpdate);
-    return () => {
-      socket.off('TIMETABLE_UPDATED', handleUpdate);
-    };
-  }, [socket]);
+    socket.on('timetable.updated', handleUpdate);
+    socket.on('attendance.session_status', handleUpdate);
+    socket.on('attendance.verified', handleUpdate);
 
-  const currentDay = timetableData?.currentDay || 'MONDAY';
-  const scheduleForDay = timetableData?.weeklySchedule?.[selectedDay] || [];
-  const hasPublished = timetableData?.hasPublishedTimetable;
+    return () => {
+      socket.off('timetable.updated', handleUpdate);
+      socket.off('attendance.session_status', handleUpdate);
+      socket.off('attendance.verified', handleUpdate);
+    };
+  }, [socket, selectedDate]);
+
+  // Date Navigation Helpers
+  const handlePrevDay = () => {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const prev = new Date(Date.UTC(y, m - 1, d - 1));
+    const py = prev.getUTCFullYear();
+    const pm = String(prev.getUTCMonth() + 1).padStart(2, '0');
+    const pd = String(prev.getUTCDate()).padStart(2, '0');
+    setSelectedDate(`${py}-${pm}-${pd}`);
+  };
+
+  const handleNextDay = () => {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const next = new Date(Date.UTC(y, m - 1, d + 1));
+    const ny = next.getUTCFullYear();
+    const nm = String(next.getUTCMonth() + 1).padStart(2, '0');
+    const nd = String(next.getUTCDate()).padStart(2, '0');
+    setSelectedDate(`${ny}-${nm}-${nd}`);
+  };
+
+  const handleToday = () => {
+    const y = effectiveDate.getFullYear();
+    const m = String(effectiveDate.getMonth() + 1).padStart(2, '0');
+    const d = String(effectiveDate.getDate()).padStart(2, '0');
+    setSelectedDate(`${y}-${m}-${d}`);
+  };
+
+  const classes = data?.classes || [];
+  const hasClasses = classes.length > 0;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <span className="text-[11px] font-extrabold text-blue-400 uppercase tracking-wider font-mono">
             FACULTY PORTAL
           </span>
-          <h1 className="text-xl font-extrabold text-slate-100 tracking-tight">My Teaching Schedule &amp; Classes</h1>
-          <p className="text-xs text-slate-400">
-            Assigned weekly period slots across departments and active biometric attendance sessions.
+          <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
+            <BookOpen className="w-7 h-7 text-blue-400" />
+            My Teaching Schedule &amp; Classes
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Official date-based class allocations and live hourly biometric attendance sessions.
           </p>
         </div>
 
-        {currentDay && (
-          <div className="px-3 py-1.5 rounded-xl bg-purple-950/80 border border-purple-800 text-purple-300 font-mono text-xs flex items-center gap-1.5 self-start sm:self-auto">
-            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-            <span>Today is {currentDay}</span>
+        {/* Date Navigator Toolbar */}
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={handlePrevDay}
+            className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors"
+            title="Previous Day"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-blue-300 font-mono font-bold focus:outline-none focus:border-blue-500"
+          />
+
+          <button
+            onClick={handleNextDay}
+            className="p-2 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 transition-colors"
+            title="Next Day"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={handleToday}
+            className="px-3 py-1.5 rounded-xl bg-blue-950/70 border border-blue-800 text-blue-300 hover:bg-blue-900 text-xs font-bold transition-all"
+          >
+            Today
+          </button>
+        </div>
+      </div>
+
+      {/* Date Banner */}
+      <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 shadow-xl flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <CalendarDays className="w-5 h-5 text-blue-400 shrink-0" />
+          <div>
+            <h2 className="text-base font-extrabold text-white">{fullFormattedDate}</h2>
+            <p className="text-[11px] text-slate-400 font-mono">Assigned faculty class slots</p>
           </div>
-        )}
-      </div>
-
-      {/* Weekday Switcher Tabs */}
-      <div className="flex flex-wrap gap-2 p-1.5 rounded-2xl bg-slate-950/80 border border-slate-800">
-        {WEEKDAYS.map((day) => {
-          const isSelected = selectedDay === day;
-          const isToday = currentDay === day;
-          const dayCount = timetableData?.weeklySchedule?.[day]?.length || 0;
-          return (
-            <button
-              key={day}
-              onClick={() => setSelectedDay(day)}
-              className={`flex-1 min-w-[100px] py-2 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
-                isSelected
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-              }`}
-            >
-              <span>{day.slice(0, 3)}</span>
-              {dayCount > 0 && (
-                <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${isSelected ? 'bg-blue-800' : 'bg-slate-800 text-slate-300'}`}>
-                  {dayCount}
-                </span>
-              )}
-              {isToday && <span className="w-2 h-2 rounded-full bg-emerald-400" title="Today" />}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Timetable Period Cards */}
-      {!hasPublished ? (
-        <div className="glass-card p-12 rounded-2xl border border-slate-800 text-center space-y-3">
-          <Calendar className="w-10 h-10 mx-auto text-slate-500 opacity-40" />
-          <h3 className="font-bold text-sm text-slate-200">No Assigned Teaching Periods</h3>
-          <p className="text-xs text-slate-400 max-w-md mx-auto">
-            The administrator has not assigned active timetable periods to your faculty profile yet.
-          </p>
         </div>
-      ) : scheduleForDay.length === 0 ? (
-        <div className="glass-card p-10 rounded-2xl border border-slate-800 text-center text-slate-500 text-xs">
-          No classes scheduled for you on {selectedDay}.
+
+        <div className="text-xs font-mono font-bold text-slate-300">
+          {hasClasses ? `${classes.length} Teaching Period(s)` : 'No Classes Assigned'}
+        </div>
+      </div>
+
+      {/* Classes List */}
+      {loading ? (
+        <div className="p-12 text-center text-xs text-slate-400 bg-slate-900/60 rounded-2xl border border-slate-800 animate-pulse">
+          Loading assigned classes for {fullFormattedDate}...
+        </div>
+      ) : !hasClasses ? (
+        <div className="glass-card p-12 rounded-2xl border border-slate-800 text-center space-y-3">
+          <AlertCircle className="w-10 h-10 text-slate-600 mx-auto" />
+          <h3 className="text-base font-bold text-slate-300">No classes assigned on this date.</h3>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            You do not have any teaching classes scheduled for {fullFormattedDate}. Use the date navigator to inspect other days.
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {scheduleForDay.map((entry: any) => (
-            <div
-              key={entry.id}
-              className="glass-card p-5 rounded-2xl border border-slate-800 space-y-3 hover:border-slate-700 transition-colors shadow-sm"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded text-[11px] font-mono font-bold bg-blue-950 text-blue-400 border border-blue-800">
-                    Period {entry.periodNumber}
-                  </span>
-                  <span className="text-xs text-slate-400 font-mono font-semibold">
-                    {entry.startTime} - {entry.endTime}
-                  </span>
-                </div>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-slate-900 text-slate-400 border border-slate-800">
-                  {entry.classType || 'Theory'}
-                </span>
-              </div>
+        <div className="space-y-3">
+          {classes.map((cls: any) => {
+            const isCancelled = cls.status === 'CANCELLED';
 
-              <div>
-                <h3 className="font-bold text-sm text-slate-100">{entry.subjectName}</h3>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="font-mono text-xs text-cyan-400 font-semibold">{entry.subjectCode}</span>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-900 text-cyan-300 border border-slate-800">
-                    Year {entry.year || Math.ceil((entry.semester || 1) / 2)} (Sem {entry.semester || 1})
-                  </span>
-                </div>
-              </div>
+            return (
+              <div
+                key={cls.id || cls._id}
+                className={`p-4 rounded-2xl border transition-all ${
+                  cls.isCurrent
+                    ? 'bg-blue-950/30 border-blue-700 shadow-lg shadow-blue-950/30'
+                    : isCancelled
+                    ? 'bg-slate-900/40 border-slate-800 opacity-60'
+                    : 'bg-slate-900/90 border-slate-800 shadow-md'
+                }`}
+              >
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  {/* Left: Hour & Subject Details */}
+                  <div className="flex items-start sm:items-center gap-4">
+                    <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-mono border shrink-0 ${
+                      cls.isCurrent
+                        ? 'bg-blue-900 text-blue-200 border-blue-600 animate-pulse'
+                        : 'bg-slate-950 text-blue-300 border-slate-800'
+                    }`}>
+                      <span className="text-[9px] uppercase font-bold">Hour</span>
+                      <span className="text-base font-black">{cls.periodNumber}</span>
+                    </div>
 
-              <div className="grid grid-cols-2 gap-2 text-xs text-slate-400 pt-2 border-t border-slate-800/80">
-                <div className="flex items-center gap-1.5">
-                  <Users className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span className="truncate">Section: {entry.sectionName}</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                  <span className="truncate">{entry.classroom}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-extrabold text-white text-base">
+                          {cls.subjectName}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-950 text-blue-300 border border-blue-800">
+                          {cls.subjectCode}
+                        </span>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">
+                          Section {cls.sectionName}
+                        </span>
 
-      {/* Active Attendance Sessions */}
-      {sessions.length > 0 && (
-        <div className="space-y-4 pt-4 border-t border-slate-800">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold text-slate-200 uppercase tracking-wider font-mono flex items-center gap-2">
-              <Clock className="w-4 h-4 text-cyan-400" /> Active Attendance Sessions ({sessions.length})
-            </h2>
-          </div>
+                        {cls.isCurrent && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 animate-pulse">
+                            LIVE CLASS NOW
+                          </span>
+                        )}
+                      </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-            {sessions.map((sess) => (
-              <div key={sess._id} className="glass-card p-4 rounded-2xl border border-slate-800 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono font-bold text-cyan-400">{sess.sessionId}</span>
-                  <Badge status={sess.status} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <h3 className="font-bold text-slate-100 text-sm">{sess.subjectId?.name}</h3>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950 text-cyan-400 border border-cyan-800">
-                      Year {sess.subjectId?.year || Math.ceil((sess.subjectId?.semester || 1) / 2)} (Sem {sess.subjectId?.semester || 1})
-                    </span>
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 mt-1.5">
+                        <span className="flex items-center gap-1 font-mono text-slate-300">
+                          <Clock className="w-3.5 h-3.5 text-slate-500" />
+                          {cls.startTime} – {cls.endTime} ({cls.slot})
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-slate-300">
+                          <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                          {cls.classroom}
+                        </span>
+                        <span>•</span>
+                        <span className="flex items-center gap-1 text-slate-300">
+                          <Users className="w-3.5 h-3.5 text-slate-500" />
+                          {cls.presentCount} / {cls.totalAllocated} Students Present
+                        </span>
+                      </div>
+
+                      {cls.notes && (
+                        <div className="text-[11px] text-amber-300/80 mt-1 italic">
+                          Note: {cls.notes}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-400">
-                    Classroom: {sess.classroomId?.building} - {sess.classroomId?.roomNumber}
-                  </p>
-                </div>
-                <div className="flex items-center justify-between pt-2 border-t border-slate-800/80">
-                  <span className="text-slate-400">
-                    {sess.startTime} - {sess.endTime}
-                  </span>
-                  <Link
-                    to={`/faculty/attendance/${sess._id}`}
-                    className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-[11px] flex items-center gap-1 shadow-sm"
-                  >
-                    <CheckSquare className="w-3.5 h-3.5" /> Monitor Live Attendance
-                  </Link>
+
+                  {/* Right: Roster Link Button */}
+                  <div className="self-end md:self-center">
+                    {cls.sessionId ? (
+                      <Link
+                        to={`/faculty/attendance/${cls.sessionId}`}
+                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-blue-950/40"
+                      >
+                        <CheckSquare className="w-3.5 h-3.5" />
+                        <span>Live Attendance Roster</span>
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-slate-500 font-mono">
+                        Session not active
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       )}
     </div>
   );
 };
-

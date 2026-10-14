@@ -19,6 +19,7 @@ router.get('/dashboard', getParentDashboard);
 router.get('/wards', getParentWards);
 router.get('/wards/:studentId/attendance', verifyParentWardAccess, getWardAttendanceHistory);
 router.get('/wards/:studentId/summary', verifyParentWardAccess, getWardAttendanceSummary);
+router.get('/wards/:studentId/attendance-summary', verifyParentWardAccess, getWardAttendanceSummary);
 router.get('/wards/:studentId/timetable', verifyParentWardAccess, getWardTimetable);
 
 export default router;

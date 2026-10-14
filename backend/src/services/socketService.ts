@@ -37,6 +37,7 @@ export const initSocket = (server: HttpServer): SocketServer => {
       if (user.role === 'ADMIN') socket.join('admin_room');
       if (user.role === 'FACULTY') socket.join(`faculty_${user.userId}`);
       if (user.role === 'STUDENT') socket.join(`student_${user.userId}`);
+      if (user.role === 'PARENT') socket.join(`parent_${user.userId}`);
     }
 
     socket.on('join_session', (sessionId: string) => {
@@ -59,12 +60,22 @@ export const getSocketIO = (): SocketServer => {
   return io;
 };
 
-export const emitAttendanceEvent = (event: string, payload: any, sessionId?: string, facultyUserId?: string, studentUserId?: string) => {
+export const emitAttendanceEvent = (
+  event: string,
+  payload: any,
+  sessionId?: string,
+  facultyUserId?: string,
+  studentUserId?: string,
+  parentUserIds?: string[]
+) => {
   if (!io) return;
   io.to('admin_room').emit(event, payload);
   if (sessionId) io.to(`session_${sessionId}`).emit(event, payload);
   if (facultyUserId) io.to(`faculty_${facultyUserId}`).emit(event, payload);
   if (studentUserId) io.to(`student_${studentUserId}`).emit(event, payload);
+  if (parentUserIds && parentUserIds.length > 0) {
+    parentUserIds.forEach((pId) => io?.to(`parent_${pId}`).emit(event, payload));
+  }
 };
 
 export const emitDeviceStatus = (deviceId: string, status: string, classroomId?: string) => {
@@ -75,4 +86,9 @@ export const emitDeviceStatus = (deviceId: string, status: string, classroomId?:
 export const emitTimetableUpdate = (payload: any) => {
   if (!io) return;
   io.emit('TIMETABLE_UPDATED', { ...payload, timestamp: new Date() });
+};
+
+export const emitSystemTimeUpdate = (clockStatus: any) => {
+  if (!io) return;
+  io.emit('system_time.updated', clockStatus);
 };

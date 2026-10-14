@@ -4,6 +4,7 @@ import { config } from './config';
 import { connectDB } from './database';
 import { initSocket } from './services/socketService';
 import { startCronJobs } from './services/cronService';
+import { clockService } from './services/clockService';
 
 const server = http.createServer(app);
 
@@ -13,6 +14,7 @@ initSocket(server);
 // Start Database & Listen
 const startServer = async () => {
   await connectDB();
+  await clockService.init();
   startCronJobs();
 
   server.listen(config.port, () => {

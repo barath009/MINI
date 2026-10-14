@@ -9,8 +9,11 @@ import { Timetable } from '../models/Timetable';
 import { Notification } from '../models/Notification';
 import { AttendanceDispute } from '../models/AttendanceDispute';
 import { Subject } from '../models/Subject';
+import { AttendanceSession } from '../models/AttendanceSession';
 import { reportAttendanceIssueSchema, updateStudentProfileSchema } from '../validators';
 import { createAuditLog } from '../services/auditService';
+import { clockService } from '../services/clockService';
+import { normalizeCalendarDate } from './adminTimetableController';
 
 export const getStudentDashboard = async (req: any, res: Response, next: NextFunction) => {
   try {
@@ -66,14 +69,14 @@ export const getStudentDashboard = async (req: any, res: Response, next: NextFun
         }
       : null;
 
-    // 3. Today's Timetable Schedule & Next Upcoming Class
-    const daysMap = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const currentDayName = daysMap[new Date().getDay()];
+    // 3. Today's Timetable Schedule & Next Upcoming Class (via effective clock & calendar date)
+    const effectiveNow = clockService.getEffectiveNow();
+    const { normalizedDate: todayNormalized, dayOfWeek: currentDayName, dateStr: todayDateStr } = normalizeCalendarDate(effectiveNow);
 
     const todayScheduleRaw = await Timetable.find({
       sectionId: student.sectionId?._id || student.sectionId,
-      dayOfWeek: currentDayName,
-      status: 'ACTIVE',
+      date: todayNormalized,
+      status: { $ne: 'CANCELLED' },
     })
       .sort({ periodNumber: 1 })
       .populate('subjectId')
@@ -81,12 +84,12 @@ export const getStudentDashboard = async (req: any, res: Response, next: NextFun
       .populate('classroomId')
       .lean();
 
-    const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes();
+    const nowMinutes = effectiveNow.getHours() * 60 + effectiveNow.getMinutes();
 
     let nextUpcomingClass: any = null;
     const formattedTodaySchedule = todayScheduleRaw.map((t: any) => {
-      const [sh, sm] = t.startTime.split(':').map((v: string) => parseInt(v, 10));
-      const [eh, em] = t.endTime.split(':').map((v: string) => parseInt(v, 10));
+      const [sh, sm] = (t.startTime || '09:00').split(':').map((v: string) => parseInt(v, 10));
+      const [eh, em] = (t.endTime || '10:00').split(':').map((v: string) => parseInt(v, 10));
       const classStartMinutes = sh * 60 + sm;
       const classEndMinutes = eh * 60 + em;
 
@@ -104,6 +107,7 @@ export const getStudentDashboard = async (req: any, res: Response, next: NextFun
         classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
         isCurrent,
         isUpcoming,
+        status: t.status || 'ACTIVE',
       };
 
       if (!nextUpcomingClass && (isCurrent || isUpcoming)) {
@@ -275,19 +279,23 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
 
     if (startDate || endDate) {
       query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate as string);
-      if (endDate) query.date.$lte = new Date(endDate as string);
+      if (startDate) query.date.$gte = normalizeCalendarDate(startDate as string).normalizedDate;
+      if (endDate) {
+        const e = normalizeCalendarDate(endDate as string).normalizedDate;
+        e.setUTCHours(23, 59, 59, 999);
+        query.date.$lte = e;
+      }
     } else if (month) {
       const [yearStr, monthStr] = (month as string).split('-');
       const y = parseInt(yearStr, 10);
       const m = parseInt(monthStr, 10) - 1;
       query.date = {
-        $gte: new Date(y, m, 1),
-        $lte: new Date(y, m + 1, 0, 23, 59, 59),
+        $gte: new Date(Date.UTC(y, m, 1)),
+        $lte: new Date(Date.UTC(y, m + 1, 0, 23, 59, 59, 999)),
       };
     }
 
-    const [records, total] = await Promise.all([
+    const [records, total, totalAll, presentAll, lateAll, absentAll] = await Promise.all([
       AttendanceRecord.find(query)
         .sort({ timestamp: -1 })
         .skip(skip)
@@ -295,23 +303,49 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
         .populate('subjectId')
         .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
         .populate('classroomId')
+        .populate('deviceId')
+        .populate('timetableId')
         .lean(),
       AttendanceRecord.countDocuments(query),
+      AttendanceRecord.countDocuments({ studentId: student._id }),
+      AttendanceRecord.countDocuments({ studentId: student._id, status: 'PRESENT' }),
+      AttendanceRecord.countDocuments({ studentId: student._id, status: 'LATE' }),
+      AttendanceRecord.countDocuments({ studentId: student._id, status: 'ABSENT' }),
     ]);
 
-    let formattedRecords = records.map((r: any) => ({
-      id: r._id,
-      date: new Date(r.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' }),
-      biometricTime: new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      subjectName: r.subjectId?.name || 'Class Session',
-      subjectCode: r.subjectId?.code || 'SUB',
-      facultyName: r.facultyId?.userId?.name || 'Assigned Faculty',
-      classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
-      status: r.status,
-      recognitionMethod: r.recognitionMethod,
-      isLate: r.status === 'LATE',
-      overrideReason: r.overrideReason,
-    }));
+    const attendedAll = presentAll + lateAll;
+    const attendancePercentage = totalAll > 0 ? parseFloat(((attendedAll / totalAll) * 100).toFixed(1)) : 100.0;
+
+    let formattedRecords = records.map((r: any) => {
+      const periodNum = r.timetableId?.periodNumber || 1;
+      const formattedDate = new Date(r.date).toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : null;
+      const devName = r.deviceId?.deviceName || r.deviceId?.deviceId || (r.recognitionMethod === 'MANUAL_OVERRIDE' ? 'Admin Override' : 'Biometric Terminal');
+
+      return {
+        id: r._id,
+        date: r.date,
+        formattedDate,
+        dateStr: new Date(r.date).toISOString().slice(0, 10),
+        periodNumber: periodNum,
+        slot: periodNum <= 3 ? 'Forenoon' : 'Afternoon',
+        startTime: r.timetableId?.startTime || '09:00',
+        endTime: r.timetableId?.endTime || '10:00',
+        biometricTime: timeStr,
+        verificationTime: timeStr,
+        subjectName: r.subjectId?.name || 'Class Session',
+        subjectCode: r.subjectId?.code || 'SUB',
+        facultyName: r.facultyId?.userId?.name || (r.facultyId as any)?.name || 'Assigned Faculty',
+        classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
+        status: r.status,
+        recognitionMethod: r.recognitionMethod,
+        deviceName: devName,
+        isLate: r.status === 'LATE',
+        isTestMode: Boolean(r.isTestMode),
+        realTimestamp: r.realTimestamp,
+        overrideReason: r.overrideReason,
+      };
+    });
 
     if (search) {
       const q = (search as string).toLowerCase();
@@ -326,6 +360,13 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
     res.status(200).json({
       success: true,
       data: formattedRecords,
+      summary: {
+        attendancePercentage,
+        totalEligibleClasses: totalAll,
+        presentCount: attendedAll,
+        absentCount: absentAll,
+        lateCount: lateAll,
+      },
       pagination: {
         total,
         page: pageNum,
@@ -343,9 +384,12 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
     const student = await Student.findOne({ userId: req.user._id });
     if (!student) throw new AppError('Student profile not found.', 404);
 
+    const { date } = req.query;
+    const { normalizedDate, dayOfWeek, dateStr } = normalizeCalendarDate(date as string | undefined);
+
     const timetableRecords = await Timetable.find({
       sectionId: student.sectionId?._id || student.sectionId,
-      status: 'ACTIVE',
+      date: normalizedDate,
     })
       .sort({ periodNumber: 1 })
       .populate('subjectId')
@@ -353,36 +397,84 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
       .populate('classroomId')
       .lean();
 
-    const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
-    const currentDay = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][new Date().getDay()];
+    // Look up attendance records for student on this date
+    const dayAttendance = await AttendanceRecord.find({
+      studentId: student._id,
+      date: normalizedDate,
+    })
+      .populate('deviceId')
+      .lean();
 
-    const grouped: Record<string, any[]> = {};
-    daysOfWeek.forEach((day) => {
-      grouped[day] = [];
-    });
-
-    timetableRecords.forEach((t: any) => {
-      if (grouped[t.dayOfWeek]) {
-        grouped[t.dayOfWeek].push({
-          id: t._id,
-          periodNumber: t.periodNumber,
-          startTime: t.startTime,
-          endTime: t.endTime,
-          subjectName: t.subjectId?.name || 'Class Subject',
-          subjectCode: t.subjectId?.code || 'SUB',
-          facultyName: t.facultyId?.userId?.name || 'Assigned Faculty',
-          classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
-          classType: 'Theory',
-        });
+    const attMap = new Map<string, any>();
+    dayAttendance.forEach((rec: any) => {
+      if (rec.timetableId) {
+        attMap.set(rec.timetableId.toString(), rec);
       }
     });
+
+    const effectiveNow = clockService.getEffectiveNow();
+    const nowMinutes = effectiveNow.getHours() * 60 + effectiveNow.getMinutes();
+
+    const formattedClasses = timetableRecords.map((t: any) => {
+      const existingRecord = attMap.get(t._id.toString());
+      const [sh, sm] = (t.startTime || '09:00').split(':').map((v: string) => parseInt(v, 10));
+      const [eh, em] = (t.endTime || '10:00').split(':').map((v: string) => parseInt(v, 10));
+      const startMin = sh * 60 + sm;
+      const endMin = eh * 60 + em;
+
+      let computedStatus: string = t.status || 'ACTIVE';
+      let verificationTime: string | null = null;
+      let deviceName: string | null = null;
+
+      if (t.status === 'CANCELLED') {
+        computedStatus = 'CANCELLED';
+      } else if (existingRecord) {
+        computedStatus = existingRecord.status;
+        verificationTime = existingRecord.timestamp
+          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          : null;
+        deviceName = (existingRecord.deviceId as any)?.deviceName || (existingRecord.deviceId as any)?.deviceId || 'Biometric Scanner';
+      } else {
+        if (nowMinutes < startMin) {
+          computedStatus = 'UPCOMING';
+        } else if (nowMinutes <= endMin) {
+          computedStatus = 'PENDING';
+        } else {
+          computedStatus = 'ABSENT';
+        }
+      }
+
+      return {
+        id: t._id,
+        periodNumber: t.periodNumber,
+        slot: t.periodNumber <= 3 ? 'Forenoon' : 'Afternoon',
+        startTime: t.startTime,
+        endTime: t.endTime,
+        subjectName: t.subjectId?.name || 'Class Subject',
+        subjectCode: t.subjectId?.code || 'SUB',
+        facultyName: t.facultyId?.userId?.name || (t.facultyId as any)?.name || 'Assigned Faculty',
+        classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
+        status: computedStatus,
+        verificationTime,
+        deviceName,
+        notes: t.notes || '',
+        isCurrent: nowMinutes >= startMin && nowMinutes <= endMin,
+      };
+    });
+
+    // Backwards compatibility weekly schedule placeholder
+    const weeklySchedule: Record<string, any[]> = { [dayOfWeek]: formattedClasses };
 
     res.status(200).json({
       success: true,
       data: {
-        currentDay,
-        weeklySchedule: grouped,
-        hasPublishedTimetable: timetableRecords.length > 0,
+        date: dateStr,
+        dayOfWeek,
+        currentDay: dayOfWeek,
+        classes: formattedClasses,
+        hasClasses: formattedClasses.length > 0,
+        weeklySchedule,
+        hasPublishedTimetable: formattedClasses.length > 0,
       },
     });
   } catch (error) {

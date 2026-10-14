@@ -5,8 +5,18 @@ import { AttendanceRecord } from '../models/AttendanceRecord';
 import { createNotification } from './notificationService';
 import { emitDeviceStatus } from './socketService';
 import { config } from '../config';
+import { syncSessionStatuses } from './sessionService';
 
 export const startCronJobs = () => {
+  // Sync Attendance Session statuses every 1 minute based on effective clock
+  cron.schedule('* * * * *', async () => {
+    try {
+      await syncSessionStatuses();
+    } catch (err) {
+      console.error('[CronJob Error - Session Status Sync]:', err);
+    }
+  });
+
   // Check offline devices every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
     try {

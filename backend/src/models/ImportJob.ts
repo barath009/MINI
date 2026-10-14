@@ -1,6 +1,6 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
-export type ImportType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'SUBJECTS';
+export type ImportType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'SUBJECTS' | 'SECTIONS';
 export type ImportStatus = 'PREVIEW' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 export interface IImportError {
@@ -56,7 +56,7 @@ const ImportPreviewRowSchema = new Schema({
 
 const ImportJobSchema: Schema = new Schema(
   {
-    importType: { type: String, enum: ['STUDENTS', 'FACULTY', 'ALLOCATIONS', 'SUBJECTS'], required: true },
+    importType: { type: String, enum: ['STUDENTS', 'FACULTY', 'ALLOCATIONS', 'SUBJECTS', 'SECTIONS'], required: true },
     uploadedFilename: { type: String, required: true },
     uploadedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     totalRows: { type: Number, default: 0 },

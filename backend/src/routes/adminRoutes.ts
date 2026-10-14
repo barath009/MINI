@@ -72,6 +72,14 @@ import {
   updateTimetablePeriod,
   deleteTimetablePeriod,
 } from '../controllers/adminTimetableController';
+import {
+  getSystemTime,
+  setTestMode,
+  setTestTime,
+  advanceTestTime,
+  setPlayback,
+  resetSystemTime,
+} from '../controllers/clockController';
 import { authenticate } from '../middleware/auth';
 import { authorize } from '../middleware/rbac';
 
@@ -162,6 +170,14 @@ router.post('/biometrics/enroll', enrollBiometrics);
 router.get('/audit', getAuditLogs);
 router.get('/settings', getSettings);
 router.put('/settings', updateSetting);
+
+// System Time Control (Admin Only for modifications)
+router.get('/system-time', getSystemTime);
+router.put('/system-time/test-mode', authorize('ADMIN'), setTestMode);
+router.put('/system-time/set', authorize('ADMIN'), setTestTime);
+router.post('/system-time/advance', authorize('ADMIN'), advanceTestTime);
+router.post('/system-time/playback', authorize('ADMIN'), setPlayback);
+router.post('/system-time/reset', authorize('ADMIN'), resetSystemTime);
 
 // Administrator Management (Admin Only)
 router.get('/admins', authorize('ADMIN'), getAdmins);

@@ -672,9 +672,29 @@ export const deleteAllDepartments = async (req: any, res: Response, next: NextFu
 
 export const getSections = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const sections = await Section.find().populate('departmentId').sort({ name: 1 });
+    const { department_code, departmentId, academic_year, academicYear, year, semester, status, search } = req.query;
+
+    const query: any = {};
+    const acad = academic_year || academicYear;
+    if (acad && acad !== 'ALL') query.academicYear = acad;
+    if (year && year !== 'ALL') query.year = Number(year);
+    if (semester && semester !== 'ALL') query.semester = Number(semester);
+    if (status && status !== 'ALL') query.status = status;
+
+    if (departmentId && departmentId !== 'ALL' && mongoose.Types.ObjectId.isValid(departmentId as string)) {
+      query.departmentId = departmentId;
+    } else if (department_code && department_code !== 'ALL') {
+      const dept = await Department.findOne({ code: (department_code as string).toUpperCase() });
+      if (dept) query.departmentId = dept._id;
+    }
+
+    if (search) {
+      query.name = new RegExp((search as string).trim(), 'i');
+    }
+
+    const sections = await Section.find(query).populate('departmentId').sort({ name: 1 });
     const sectionsWithStudents = await Promise.all(
-      sections.map(async (sec) => {
+      sections.map(async (sec: any) => {
         const studentList = await Student.find({ sectionId: sec._id })
           .populate('userId departmentId')
           .select('registerNumber rollNumber userId departmentId biometricStatus status');
@@ -682,6 +702,7 @@ export const getSections = async (req: Request, res: Response, next: NextFunctio
           ...sec.toObject(),
           students: studentList,
           studentCount: studentList.length,
+          capacity: sec.capacity || 60,
         };
       })
     );
@@ -693,9 +714,21 @@ export const getSections = async (req: Request, res: Response, next: NextFunctio
 
 export const createSection = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { name, departmentId, year, semester, academicYear } = req.body;
-    const sec = await Section.create({ name, departmentId, year, semester, academicYear });
-    res.status(201).json({ success: true, message: 'Section created', data: sec });
+    const { name, departmentId, year, semester, academicYear, capacity, status } = req.body;
+    if (!name || !departmentId || !year || !semester) {
+      throw new AppError('name, departmentId, year, and semester are required.', 400);
+    }
+    const sec = await Section.create({
+      name: name.trim(),
+      departmentId,
+      year: Number(year),
+      semester: Number(semester),
+      academicYear: academicYear?.trim() || '2026-2027',
+      capacity: capacity ? Number(capacity) : 60,
+      status: status || 'ACTIVE',
+    });
+    const populated = await Section.findById(sec._id).populate('departmentId');
+    res.status(201).json({ success: true, message: 'Section created', data: populated || sec });
   } catch (error) {
     next(error);
   }
@@ -704,7 +737,7 @@ export const createSection = async (req: Request, res: Response, next: NextFunct
 export const updateSection = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const { name, departmentId, year, semester, academicYear } = req.body;
+    const { name, departmentId, year, semester, academicYear, capacity, status } = req.body;
 
     const section = await Section.findById(id);
     if (!section) throw new AppError('Section not found', 404);
@@ -714,6 +747,8 @@ export const updateSection = async (req: any, res: Response, next: NextFunction)
     if (year !== undefined) section.year = Number(year);
     if (semester !== undefined) section.semester = Number(semester);
     if (academicYear) section.academicYear = academicYear.trim();
+    if (capacity !== undefined) section.capacity = Number(capacity);
+    if (status) section.status = status;
 
     await section.save();
 
@@ -725,6 +760,8 @@ export const updateSection = async (req: any, res: Response, next: NextFunction)
       year: section.year,
       semester: section.semester,
       academicYear: section.academicYear,
+      capacity: section.capacity,
+      status: section.status,
     });
 
     res.status(200).json({

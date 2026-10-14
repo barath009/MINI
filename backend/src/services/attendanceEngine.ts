@@ -6,10 +6,13 @@ import { Student } from '../models/Student';
 import { ClassAllocation } from '../models/ClassAllocation';
 import { AttendanceRecord } from '../models/AttendanceRecord';
 import { RecognitionEvent, RecognitionResult } from '../models/RecognitionEvent';
+import { ParentWard } from '../models/ParentWard';
 import { User } from '../models/User';
 import { FaceClient, FaceRecognitionResult } from './faceClient';
 import { emitAttendanceEvent } from './socketService';
 import { createNotification } from './notificationService';
+import { clockService } from './clockService';
+import { SessionService } from './sessionService';
 import { config } from '../config';
 
 export interface ProcessRecognizeInput {
@@ -55,17 +58,42 @@ export class AttendanceEngine {
     }
 
     // Update Device heartbeat timestamp
-    device.lastHeartbeat = new Date();
+    device.lastHeartbeat = clockService.getRealNow();
     device.status = 'ONLINE';
     await device.save();
 
-    // 3. Validate Active Session for Device Classroom
+    // 3. Centralized Application Clock & Session Time Validation
+    const effectiveNow = clockService.getEffectiveNow();
+    const effectiveTimeStr = `${String(effectiveNow.getHours()).padStart(2, '0')}:${String(effectiveNow.getMinutes()).padStart(2, '0')}`;
+    const effectiveDate = SessionService.normalizeDate(effectiveNow);
+
+    // Reject scans during institutional lunch break (12:00 PM - 1:00 PM)
+    if (SessionService.isLunchTime(effectiveTimeStr)) {
+      await this.logRecognitionEvent({
+        eventId,
+        deviceId,
+        faceDetected: false,
+        faceCount: 0,
+        livenessPassed: false,
+        result: 'SESSION_INACTIVE',
+        failureReason: 'Biometric scan attempted during institutional lunch break (12:00 PM - 1:00 PM).',
+      });
+      return {
+        success: false,
+        message: 'Campus is currently on lunch break (12:00 PM - 1:00 PM). No class attendance session is active.',
+        errorCode: 'LUNCH_BREAK_SCAN_REJECTED',
+      };
+    }
+
+    // Validate Active Session for this classroom on the effective date
     const activeSession = await AttendanceSession.findOne({
       classroomId: device.classroomId,
+      date: effectiveDate,
       status: 'ACTIVE',
     })
       .populate('subjectId')
-      .populate('facultyId');
+      .populate('facultyId')
+      .populate('timetableId');
 
     if (!activeSession) {
       await this.logRecognitionEvent({
@@ -75,11 +103,11 @@ export class AttendanceEngine {
         faceCount: 0,
         livenessPassed: false,
         result: 'SESSION_INACTIVE',
-        failureReason: 'No ACTIVE attendance session found in this classroom.',
+        failureReason: `No ACTIVE attendance session found in classroom for date ${effectiveDate.toISOString().slice(0, 10)}.`,
       });
       return {
         success: false,
-        message: 'No active class session currently running in this classroom.',
+        message: 'No active class session currently running in this classroom for the scheduled date and time.',
         errorCode: 'SESSION_INACTIVE',
       };
     }
@@ -206,14 +234,15 @@ export class AttendanceEngine {
       };
     }
 
-    // Verify Student allocation to this Staff member
+    // Verify Student allocation to this section or staff member
+    const isEnrolledInSection = activeSession.sectionId && student.sectionId?.toString() === activeSession.sectionId.toString();
     const allocation = await ClassAllocation.findOne({
       studentId: student._id,
       facultyId: (activeSession.facultyId as any)?._id || activeSession.facultyId,
       status: 'ACTIVE',
     });
 
-    if (!allocation) {
+    if (!isEnrolledInSection && !allocation) {
       await this.logRecognitionEvent({
         eventId,
         deviceId,
@@ -223,11 +252,11 @@ export class AttendanceEngine {
         confidence: faceResult.confidence,
         livenessPassed: true,
         result: 'STUDENT_NOT_ALLOCATED',
-        failureReason: `Student '${student.registerNumber}' is not allocated to this staff member.`,
+        failureReason: `Student '${student.registerNumber}' is not enrolled in this section or allocated to this class.`,
       });
       return {
         success: false,
-        message: `Student ${student.registerNumber} is not allocated to this staff member's classroom.`,
+        message: `Student ${student.registerNumber} is not enrolled in this section or allocated to this class session.`,
         errorCode: 'ATTENDANCE_REJECTED',
       };
     }
@@ -262,27 +291,32 @@ export class AttendanceEngine {
       };
     }
 
-    // 8. Calculate Attendance Status (PRESENT vs LATE based on grace period)
-    const now = new Date();
+    // 8. Calculate Attendance Status (PRESENT vs LATE based on grace period from effective time)
     const [startH, startM] = activeSession.startTime.split(':').map(Number);
     const sessionStartTime = new Date(activeSession.date);
     sessionStartTime.setHours(startH, startM, 0, 0);
 
     const graceEndTime = new Date(sessionStartTime.getTime() + activeSession.gracePeriodMinutes * 60 * 1000);
-    const attendanceStatus = now <= graceEndTime ? 'PRESENT' : 'LATE';
+    const attendanceStatus = effectiveNow <= graceEndTime ? 'PRESENT' : 'LATE';
+
+    const realNow = clockService.getRealNow();
+    const isTestMode = clockService.getStatus().mode === 'TEST_MODE';
 
     // 9. Atomic Create Attendance Record
     try {
       const attendanceRecord = await AttendanceRecord.create({
         studentId: student._id,
         sessionId: activeSession._id,
+        timetableId: activeSession.timetableId?._id || activeSession.timetableId,
         subjectId: (activeSession.subjectId as any)?._id || activeSession.subjectId,
         facultyId: (activeSession.facultyId as any)?._id || activeSession.facultyId,
         sectionId: activeSession.sectionId,
         classroomId: activeSession.classroomId,
         deviceId: device._id,
         date: activeSession.date,
-        timestamp: now,
+        timestamp: effectiveNow,
+        realTimestamp: realNow,
+        isTestMode,
         status: attendanceStatus,
         markedBy: 'SYSTEM',
         recognitionMethod: 'FACE_RECOGNITION',
@@ -290,7 +324,7 @@ export class AttendanceEngine {
         eventId,
       });
 
-      // Log successful recognition event
+      // Log successful recognition event (audit preserves real physical server timestamp)
       await this.logRecognitionEvent({
         eventId,
         deviceId,
@@ -306,21 +340,24 @@ export class AttendanceEngine {
       const userDoc = student.userId as any;
       const facultyUserDoc = (activeSession.facultyId as any)?.userId;
 
-      // Realtime notification payload
-      const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-      const roomName = 'Room A204'; // Or classroom display string
+      // Find parents linked to this student to emit real-time event
+      const parentLinks = await ParentWard.find({ student: student._id, status: 'ACTIVE' }).select('parent');
+      const parentUserIds = parentLinks.map((p) => p.parent?.toString()).filter(Boolean);
+
+      // Notification string
+      const timeString = effectiveNow.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
       // Create student notification
       await createNotification(
         userDoc._id,
         'Attendance Recorded',
-        `Attendance recorded as ${attendanceStatus} at ${timeString} for ${(activeSession.subjectId as any).name}.`,
+        `Attendance recorded as ${attendanceStatus} at ${timeString} for ${(activeSession.subjectId as any).name}. Verified via ${device.deviceName}.`,
         'ATTENDANCE_MARKED',
         'LOW',
         { sessionId: activeSession.sessionId, status: attendanceStatus }
       );
 
-      // Emit Socket.IO Event
+      // Emit Real-time Socket.IO Event with device metadata and effective timestamp
       emitAttendanceEvent(
         'attendance.created',
         {
@@ -332,15 +369,22 @@ export class AttendanceEngine {
             registerNumber: student.registerNumber,
             rollNumber: student.rollNumber,
           },
-          subject: (activeSession.subjectId as any).name,
+          subject: (activeSession.subjectId as any)?.name,
+          subjectCode: (activeSession.subjectId as any)?.code,
           status: attendanceStatus,
-          timestamp: now,
+          timestamp: effectiveNow,
+          realTimestamp: realNow,
+          isTestMode,
+          deviceName: device.deviceName,
+          deviceId: device.deviceId,
+          classroomName: activeSession.classroomId ? 'MZ Classroom 101' : 'Classroom',
           confidence: faceResult.confidence,
           recognitionMethod: 'FACE_RECOGNITION',
         },
         activeSession.sessionId,
         facultyUserDoc?.toString(),
-        userDoc._id.toString()
+        userDoc._id.toString(),
+        parentUserIds
       );
 
       return {
@@ -351,7 +395,9 @@ export class AttendanceEngine {
           studentName: userDoc.name,
           registerNumber: student.registerNumber,
           status: attendanceStatus,
-          timestamp: now,
+          timestamp: effectiveNow,
+          deviceName: device.deviceName,
+          isTestMode,
           confidence: faceResult.confidence,
         },
       };
@@ -371,14 +417,27 @@ export class AttendanceEngine {
     const session = await AttendanceSession.findById(sessionId);
     if (!session || session.status === 'COMPLETED') return;
 
-    // Find all allocated students for this subject & section
+    const effectiveNow = clockService.getEffectiveNow();
+    const realNow = clockService.getRealNow();
+    const isTestMode = clockService.getStatus().mode === 'TEST_MODE';
+
+    // Find all allocated/enrolled students for this section or subject
     const allocations = await ClassAllocation.find({
-      subjectId: session.subjectId,
-      sectionId: session.sectionId,
+      $or: [
+        { sectionId: session.sectionId },
+        { subjectId: session.subjectId, sectionId: session.sectionId },
+      ],
       status: 'ACTIVE',
     });
 
-    const studentIds = allocations.map((a: any) => a.studentId);
+    let studentIds = allocations.map((a: any) => a.studentId.toString());
+
+    // Also include any students whose student.sectionId matches session.sectionId
+    if (session.sectionId) {
+      const sectionStudents = await Student.find({ sectionId: session.sectionId, status: 'ACTIVE' }).select('_id');
+      const secIds = sectionStudents.map((s) => s._id.toString());
+      studentIds = Array.from(new Set([...studentIds, ...secIds]));
+    }
 
     // Find students already marked present/late/excused
     const existingRecords = await AttendanceRecord.find({
@@ -388,16 +447,19 @@ export class AttendanceEngine {
 
     const absentRecordsToInsert = [];
     for (const studentId of studentIds) {
-      if (!markedStudentIds.has(studentId.toString())) {
+      if (!markedStudentIds.has(studentId)) {
         absentRecordsToInsert.push({
-          studentId,
+          studentId: new mongoose.Types.ObjectId(studentId),
           sessionId: session._id,
+          timetableId: session.timetableId,
           subjectId: session.subjectId,
           facultyId: session.facultyId,
           sectionId: session.sectionId,
           classroomId: session.classroomId,
           date: session.date,
-          timestamp: new Date(),
+          timestamp: effectiveNow,
+          realTimestamp: realNow,
+          isTestMode,
           status: 'ABSENT',
           markedBy: 'SYSTEM',
           recognitionMethod: 'SYSTEM_AUTO_ABSENT',
@@ -430,7 +492,7 @@ export class AttendanceEngine {
     try {
       await RecognitionEvent.create({
         ...payload,
-        timestamp: new Date(),
+        timestamp: clockService.getRealNow(), // Security events preserve real physical server timestamp
         modelVersion: 'ArcFace-v1',
         processingTimeMs: 45,
       });

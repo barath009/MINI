@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SocketProvider } from './context/SocketContext';
+import { SystemClockProvider } from './context/SystemClockContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { Login } from './pages/Login';
@@ -28,6 +29,7 @@ import { AdminReports } from './pages/admin/Reports';
 import { AdminBiometrics } from './pages/admin/Biometrics';
 import { AdminAudit } from './pages/admin/Audit';
 import { AdminSettings } from './pages/admin/Settings';
+import { SystemTimeControl } from './pages/admin/SystemTimeControl';
 import { UserStatusControl } from './pages/admin/UserStatusControl';
 import { BulkImport } from './pages/admin/BulkImport';
 import { ParentManagement } from './pages/admin/ParentManagement';
@@ -108,6 +110,8 @@ export const AppRoutes: React.FC = () => {
         <Route path="biometric" element={<AdminBiometrics />} />
         <Route path="audit" element={<AdminAudit />} />
         <Route path="settings" element={<AdminSettings />} />
+        <Route path="system-time-control" element={<SystemTimeControl />} />
+        <Route path="system-time" element={<SystemTimeControl />} />
         <Route path="user-status-control" element={<UserStatusControl />} />
         <Route
           path="bulk-import"
@@ -185,7 +189,9 @@ export const App: React.FC = () => {
       <BrowserRouter>
         <AuthProvider>
           <SocketProvider>
-            <AppRoutes />
+            <SystemClockProvider>
+              <AppRoutes />
+            </SystemClockProvider>
           </SocketProvider>
         </AuthProvider>
       </BrowserRouter>

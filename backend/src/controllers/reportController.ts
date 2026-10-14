@@ -5,22 +5,43 @@ import { Department } from '../models/Department';
 
 export const exportAttendanceReport = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { format, reportType, startDate, endDate, departmentId } = req.query;
+    const { format, reportType, startDate, endDate, date, departmentId, sectionId, status, subjectId } = req.query;
 
     const query: any = {};
-    if (startDate && endDate) {
+    if (date) {
+      const d = new Date(date as string);
+      const startOfDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
+      const endOfDay = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999));
+      query.date = { $gte: startOfDay, $lte: endOfDay };
+    } else if (startDate && endDate) {
       query.date = {
         $gte: new Date(startDate as string),
         $lte: new Date(endDate as string),
       };
     }
 
+    if (status && status !== 'ALL') {
+      query.status = status;
+    }
+    if (subjectId && subjectId !== 'ALL') {
+      query.subjectId = subjectId;
+    }
+    if (sectionId && sectionId !== 'ALL') {
+      query.sectionId = sectionId;
+    }
+    if (departmentId && departmentId !== 'ALL') {
+      const studentsInDept = await Student.find({ departmentId }).select('_id');
+      query.studentId = { $in: studentsInDept.map((s) => s._id) };
+    }
+
     const records = await AttendanceRecord.find(query)
-      .populate({ path: 'studentId', populate: [{ path: 'userId' }, { path: 'departmentId' }] })
+      .populate({ path: 'studentId', populate: [{ path: 'userId' }, { path: 'departmentId' }, { path: 'sectionId' }] })
       .populate('subjectId')
       .populate({ path: 'facultyId', populate: { path: 'userId' } })
       .populate('classroomId')
-      .sort({ date: -1 });
+      .populate('deviceId')
+      .populate('timetableId')
+      .sort({ timestamp: -1 });
 
     if (format === 'csv') {
       let csv = 'Register Number,Student Name,Department,Subject,Faculty,Classroom,Date,Time,Status,Recognition Method\n';
