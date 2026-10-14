@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../services/api';
-import { Building, Plus, Clock, Users, UserCheck, Eye, X, CheckCircle, Trash2, Edit, Filter } from 'lucide-react';
+import { Building, Plus, Clock, Users, UserCheck, Eye, X, CheckCircle, Trash2, Edit, Filter, AlertTriangle, CheckSquare, Square } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { Badge } from '../../components/common/Badge';
 
@@ -21,6 +21,16 @@ export const AdminClassrooms: React.FC = () => {
   const [showAddRoomModal, setShowAddRoomModal] = useState(false);
   const [editingRoom, setEditingRoom] = useState<any | null>(null);
   const [showAddSlotModal, setShowAddSlotModal] = useState(false);
+
+  // Bulk Selection & Delete All state
+  const [selectedRoomIds, setSelectedRoomIds] = useState<string[]>([]);
+  const [showDeleteAllRoomsModal, setShowDeleteAllRoomsModal] = useState(false);
+  const [deleteScope, setDeleteScope] = useState<'all' | 'filtered'>('all');
+  const [isDeletingRooms, setIsDeletingRooms] = useState(false);
+
+  const [showDeleteAllSlotsModal, setShowDeleteAllSlotsModal] = useState(false);
+  const [deleteSlotScope, setDeleteSlotScope] = useState<'all' | 'filtered'>('all');
+  const [isDeletingSlots, setIsDeletingSlots] = useState(false);
 
   // Selected Classroom Slot Inspector State
   const [selectedSlot, setSelectedSlot] = useState<any | null>(null);
@@ -199,14 +209,75 @@ export const AdminClassrooms: React.FC = () => {
     }
   };
 
+  const isFilterActive = Boolean(filterDeptId || filterSectionId);
+  const isAllDisplaySelected = displayClassrooms.length > 0 && displayClassrooms.every((c) => selectedRoomIds.includes(c._id));
+
+  const toggleSelectAllDisplay = () => {
+    if (isAllDisplaySelected) {
+      const displayIds = new Set(displayClassrooms.map((c) => c._id));
+      setSelectedRoomIds((prev) => prev.filter((id) => !displayIds.has(id)));
+    } else {
+      const newSelected = new Set([...selectedRoomIds, ...displayClassrooms.map((c) => c._id)]);
+      setSelectedRoomIds(Array.from(newSelected));
+    }
+  };
+
+  const toggleSelectRoom = (roomId: string) => {
+    setSelectedRoomIds((prev) =>
+      prev.includes(roomId) ? prev.filter((id) => id !== roomId) : [...prev, roomId]
+    );
+  };
+
   const handleDeleteRoom = async (roomId: string) => {
     if (!window.confirm('Are you sure you want to delete this classroom?')) return;
     try {
       await api.delete(`/admin/classrooms/${roomId}`);
       setSuccessMessage('Classroom removed successfully.');
+      setSelectedRoomIds((prev) => prev.filter((id) => id !== roomId));
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchAllData();
-    } catch (err) {}
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to remove classroom');
+    }
+  };
+
+  const handleDeleteAllRooms = async () => {
+    setIsDeletingRooms(true);
+    try {
+      if (deleteScope === 'filtered' && isFilterActive) {
+        const ids = displayClassrooms.map((c) => c._id);
+        const res = await api.delete('/admin/classrooms', { data: { ids } });
+        setSuccessMessage(res.data?.message || `Removed ${ids.length} filtered classrooms.`);
+      } else {
+        const res = await api.delete('/admin/classrooms/all');
+        setSuccessMessage(res.data?.message || 'All classrooms removed successfully.');
+      }
+      setShowDeleteAllRoomsModal(false);
+      setSelectedRoomIds([]);
+      setTimeout(() => setSuccessMessage(''), 4000);
+      fetchAllData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete classrooms.');
+    } finally {
+      setIsDeletingRooms(false);
+    }
+  };
+
+  const handleDeleteSelectedRooms = async () => {
+    if (selectedRoomIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete the ${selectedRoomIds.length} selected classroom(s)?`)) return;
+    setIsDeletingRooms(true);
+    try {
+      const res = await api.delete('/admin/classrooms', { data: { ids: selectedRoomIds } });
+      setSuccessMessage(res.data?.message || `Removed ${selectedRoomIds.length} selected classrooms.`);
+      setSelectedRoomIds([]);
+      setTimeout(() => setSuccessMessage(''), 4000);
+      fetchAllData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete selected classrooms.');
+    } finally {
+      setIsDeletingRooms(false);
+    }
   };
 
   const handleDeleteSlot = async (sessionId: string) => {
@@ -216,6 +287,27 @@ export const AdminClassrooms: React.FC = () => {
       setTimeout(() => setSuccessMessage(''), 3000);
       fetchAllData();
     } catch (err) {}
+  };
+
+  const handleDeleteAllSlots = async () => {
+    setIsDeletingSlots(true);
+    try {
+      if (deleteSlotScope === 'filtered' && isFilterActive) {
+        const ids = displaySessions.map((s) => s._id);
+        const res = await api.delete('/admin/sessions', { data: { ids } });
+        setSuccessMessage(res.data?.message || `Removed ${ids.length} filtered time slots.`);
+      } else {
+        const res = await api.delete('/admin/sessions/all');
+        setSuccessMessage(res.data?.message || 'All scheduled time slots removed successfully.');
+      }
+      setShowDeleteAllSlotsModal(false);
+      setTimeout(() => setSuccessMessage(''), 4000);
+      fetchAllData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete scheduled time slots.');
+    } finally {
+      setIsDeletingSlots(false);
+    }
   };
 
   const openSlotInspector = async (slotSession: any) => {
@@ -246,7 +338,19 @@ export const AdminClassrooms: React.FC = () => {
             Map classrooms to specific Department + Section and schedule 1-hour timeline slots for mapped students.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {classrooms.length > 0 && (
+            <button
+              onClick={() => {
+                setDeleteScope(isFilterActive ? 'filtered' : 'all');
+                setShowDeleteAllRoomsModal(true);
+              }}
+              className="px-3.5 py-2 rounded-xl bg-rose-950/40 hover:bg-rose-900/70 border border-rose-800/60 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition-colors"
+              title="Delete All Classrooms"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400" /> Delete All Classrooms
+            </button>
+          )}
           <button
             onClick={handleOpenAddRoom}
             className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-2 transition-colors"
@@ -327,64 +431,155 @@ export const AdminClassrooms: React.FC = () => {
         <div className="space-y-6">
           {/* Classrooms Section */}
           <div>
-            <h2 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider mb-3">
-              Mapped Campus Classrooms ({displayClassrooms.length})
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                  <Building className="w-4 h-4 text-cyan-400" />
+                  Mapped Campus Classrooms ({displayClassrooms.length}
+                  {displayClassrooms.length !== classrooms.length ? ` of ${classrooms.length}` : ''})
+                </h2>
+                {displayClassrooms.length > 0 && (
+                  <button
+                    onClick={toggleSelectAllDisplay}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+                  >
+                    {isAllDisplaySelected ? (
+                      <>
+                        <CheckSquare className="w-3.5 h-3.5 text-cyan-400" /> Unselect All
+                      </>
+                    ) : (
+                      <>
+                        <Square className="w-3.5 h-3.5 text-slate-500" /> Select All ({displayClassrooms.length})
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+
+              {classrooms.length > 0 && (
+                <div className="flex items-center gap-2">
+                  {selectedRoomIds.length > 0 && (
+                    <button
+                      onClick={handleDeleteSelectedRooms}
+                      disabled={isDeletingRooms}
+                      className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-rose-900/30 transition-all"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete Selected ({selectedRoomIds.length})
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setDeleteScope(isFilterActive ? 'filtered' : 'all');
+                      setShowDeleteAllRoomsModal(true);
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                    title="Delete All Classrooms"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                    Delete All
+                  </button>
+                </div>
+              )}
+            </div>
+
             {displayClassrooms.length === 0 ? (
               <div className="glass-card p-6 text-center text-xs text-slate-500 rounded-2xl border border-slate-800 italic">
                 No classrooms mapped to the selected Department &amp; Section filter.
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
-                {displayClassrooms.map((c) => (
-                  <div key={c._id} className="glass-card p-4 rounded-2xl border border-slate-800 space-y-2 relative overflow-hidden">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-100">{c.building}</span>
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950 text-cyan-400 border border-cyan-800/60">
-                        Cap: {c.capacity}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-2xl font-black text-cyan-400 font-mono">
-                        Room {c.roomNumber}
-                      </p>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => handleOpenEditRoom(c)}
-                          className="p-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/60 transition-colors"
-                          title="Edit Classroom Mapping"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteRoom(c._id)}
-                          className="p-1 rounded-lg hover:bg-rose-950/80 text-slate-500 hover:text-rose-400 transition-colors"
-                          title="Remove Classroom"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                {displayClassrooms.map((c) => {
+                  const isSelected = selectedRoomIds.includes(c._id);
+                  return (
+                    <div
+                      key={c._id}
+                      className={`glass-card p-4 rounded-2xl border space-y-2 relative overflow-hidden transition-all ${
+                        isSelected
+                          ? 'border-cyan-500/80 bg-cyan-950/20 ring-1 ring-cyan-500/30'
+                          : 'border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleSelectRoom(c._id);
+                            }}
+                            className="p-0.5 text-slate-400 hover:text-cyan-400 transition-colors"
+                            title={isSelected ? 'Unselect' : 'Select for deletion'}
+                          >
+                            {isSelected ? (
+                              <CheckSquare className="w-4 h-4 text-cyan-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-600 hover:text-slate-400" />
+                            )}
+                          </button>
+                          <span className="font-bold text-slate-100">{c.building}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-cyan-950 text-cyan-400 border border-cyan-800/60">
+                          Cap: {c.capacity}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-2xl font-black text-cyan-400 font-mono">
+                          Room {c.roomNumber}
+                        </p>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleOpenEditRoom(c)}
+                            className="p-1 rounded-lg bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/60 transition-colors"
+                            title="Edit Classroom Mapping"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteRoom(c._id)}
+                            className="p-1 rounded-lg hover:bg-rose-950/80 text-slate-500 hover:text-rose-400 transition-colors"
+                            title="Remove Classroom"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      
+                      <div className="pt-2 border-t border-slate-800/80 space-y-1 text-[11px]">
+                        <p className="text-slate-300 font-bold flex items-center justify-between">
+                          <span>Dept: {c.departmentId?.code || 'General'}</span>
+                          <span className="text-cyan-400">Sec: {c.sectionId?.name || 'All'}</span>
+                        </p>
+                        <p className="text-[10px] text-slate-400">Floor {c.floor} • IoT Sensor Unit</p>
                       </div>
                     </div>
-                    
-                    <div className="pt-2 border-t border-slate-800/80 space-y-1 text-[11px]">
-                      <p className="text-slate-300 font-bold flex items-center justify-between">
-                        <span>Dept: {c.departmentId?.code || 'General'}</span>
-                        <span className="text-cyan-400">Sec: {c.sectionId?.name || 'All'}</span>
-                      </p>
-                      <p className="text-[10px] text-slate-400">Floor {c.floor} • IoT Sensor Unit</p>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
 
           {/* 1-Hour Timeline Slots List */}
           <div>
-            <h2 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Clock className="w-4 h-4 text-cyan-400" />
-              Scheduled 1-Hour Classroom Time Slots ({displaySessions.length})
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+              <h2 className="text-xs font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Clock className="w-4 h-4 text-cyan-400" />
+                Scheduled 1-Hour Classroom Time Slots ({displaySessions.length})
+              </h2>
+              {sessions.length > 0 && (
+                <button
+                  onClick={() => {
+                    setDeleteSlotScope(isFilterActive ? 'filtered' : 'all');
+                    setShowDeleteAllSlotsModal(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 text-xs font-bold flex items-center gap-1.5 transition-colors"
+                  title="Delete All Scheduled Slots"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+                  Delete All Slots
+                </button>
+              )}
+            </div>
 
             {displaySessions.length === 0 ? (
               <div className="glass-card p-8 text-center text-xs text-slate-500 rounded-2xl border border-slate-800 italic">
@@ -771,6 +966,194 @@ export const AdminClassrooms: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete All Classrooms Modal */}
+      <Modal
+        isOpen={showDeleteAllRoomsModal}
+        onClose={() => !isDeletingRooms && setShowDeleteAllRoomsModal(false)}
+        title="Confirm Delete All Classrooms"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-800/80 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-rose-200 text-sm">Permanent Action Warning</h4>
+              <p className="text-rose-300/90 leading-relaxed">
+                Deleting classrooms cannot be undone. All selected classrooms will be permanently removed from the system database.
+              </p>
+            </div>
+          </div>
+
+          {isFilterActive ? (
+            <div className="space-y-2">
+              <label className="block text-slate-300 font-bold">Select Deletion Scope:</label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-slate-700">
+                  <input
+                    type="radio"
+                    name="deleteRoomScope"
+                    checked={deleteScope === 'filtered'}
+                    onChange={() => setDeleteScope('filtered')}
+                    className="text-rose-500 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-100">
+                      Delete Only Filtered Classrooms ({displayClassrooms.length})
+                    </span>
+                    <p className="text-[11px] text-slate-400">
+                      Removes only the {displayClassrooms.length} classrooms matching the active filter.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-slate-700">
+                  <input
+                    type="radio"
+                    name="deleteRoomScope"
+                    checked={deleteScope === 'all'}
+                    onChange={() => setDeleteScope('all')}
+                    className="text-rose-500 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-100">
+                      Delete ALL Campus Classrooms ({classrooms.length})
+                    </span>
+                    <p className="text-[11px] text-slate-400">
+                      Completely clears all {classrooms.length} classrooms across every building.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          ) : (
+            <p className="text-slate-300 leading-relaxed">
+              Are you sure you want to permanently delete all <strong className="text-rose-400 font-bold">{classrooms.length}</strong> classrooms in the campus database?
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              disabled={isDeletingRooms}
+              onClick={() => setShowDeleteAllRoomsModal(false)}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isDeletingRooms || (deleteScope === 'filtered' && displayClassrooms.length === 0)}
+              onClick={handleDeleteAllRooms}
+              className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-rose-900/30 transition-all"
+            >
+              {isDeletingRooms ? (
+                <span>Deleting...</span>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  {deleteScope === 'filtered' && isFilterActive
+                    ? `Yes, Delete Filtered (${displayClassrooms.length})`
+                    : `Yes, Delete All (${classrooms.length})`}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete All Scheduled Slots Modal */}
+      <Modal
+        isOpen={showDeleteAllSlotsModal}
+        onClose={() => !isDeletingSlots && setShowDeleteAllSlotsModal(false)}
+        title="Confirm Delete All Scheduled Slots"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-800/80 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-rose-200 text-sm">Permanent Action Warning</h4>
+              <p className="text-rose-300/90 leading-relaxed">
+                Deleting scheduled slots will also remove any mapped attendance session records logged for those sessions.
+              </p>
+            </div>
+          </div>
+
+          {isFilterActive ? (
+            <div className="space-y-2">
+              <label className="block text-slate-300 font-bold">Select Deletion Scope:</label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-slate-700">
+                  <input
+                    type="radio"
+                    name="deleteSlotScope"
+                    checked={deleteSlotScope === 'filtered'}
+                    onChange={() => setDeleteSlotScope('filtered')}
+                    className="text-rose-500 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-100">
+                      Delete Only Filtered Slots ({displaySessions.length})
+                    </span>
+                    <p className="text-[11px] text-slate-400">
+                      Removes only the {displaySessions.length} timeline slots currently filtered.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-3 p-3 rounded-xl bg-slate-900 border border-slate-800 cursor-pointer hover:border-slate-700">
+                  <input
+                    type="radio"
+                    name="deleteSlotScope"
+                    checked={deleteSlotScope === 'all'}
+                    onChange={() => setDeleteSlotScope('all')}
+                    className="text-rose-500 focus:ring-rose-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-100">
+                      Delete ALL Scheduled Slots ({sessions.length})
+                    </span>
+                    <p className="text-[11px] text-slate-400">
+                      Completely clears all {sessions.length} scheduled classroom time slots.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          ) : (
+            <p className="text-slate-300 leading-relaxed">
+              Are you sure you want to permanently delete all <strong className="text-rose-400 font-bold">{sessions.length}</strong> scheduled classroom time slots?
+            </p>
+          )}
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              disabled={isDeletingSlots}
+              onClick={() => setShowDeleteAllSlotsModal(false)}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isDeletingSlots || (deleteSlotScope === 'filtered' && displaySessions.length === 0)}
+              onClick={handleDeleteAllSlots}
+              className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-rose-900/30 transition-all"
+            >
+              {isDeletingSlots ? (
+                <span>Deleting...</span>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  {deleteSlotScope === 'filtered' && isFilterActive
+                    ? `Yes, Delete Filtered (${displaySessions.length})`
+                    : `Yes, Delete All (${sessions.length})`}
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

@@ -18,6 +18,7 @@ import { AdminAllocations } from './pages/admin/Allocations';
 import { AdminDepartments } from './pages/admin/Departments';
 import { AdminSections } from './pages/admin/Sections';
 import { AdminSubjects } from './pages/admin/Subjects';
+import { SubjectsByDepartment } from './pages/admin/SubjectsByDepartment';
 import { AdminTimetable } from './pages/admin/Timetable';
 import { AdminClassrooms } from './pages/admin/Classrooms';
 import { AdminDevices } from './pages/admin/Devices';
@@ -44,6 +45,7 @@ import { ParentWards } from './pages/parent/ParentWards';
 import { ParentAttendanceHistory } from './pages/parent/ParentAttendanceHistory';
 import { ParentAnalytics } from './pages/parent/ParentAnalytics';
 import { ParentProfile } from './pages/parent/ParentProfile';
+import { ParentTimetable } from './pages/parent/ParentTimetable';
 
 // Student Pages
 import { StudentDashboard } from './pages/student/Dashboard';
@@ -54,6 +56,7 @@ import { StudentNotifications } from './pages/student/Notifications';
 import { StudentDisputes } from './pages/student/Disputes';
 import { StudentBiometricStatus } from './pages/student/BiometricStatus';
 import { StudentProfile } from './pages/student/Profile';
+import { StudentSubjects } from './pages/student/Subjects';
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: string[] }> = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -94,6 +97,8 @@ export const AppRoutes: React.FC = () => {
         <Route path="departments" element={<AdminDepartments />} />
         <Route path="sections" element={<AdminSections />} />
         <Route path="subjects" element={<AdminSubjects />} />
+        <Route path="subject-departments" element={<SubjectsByDepartment />} />
+        <Route path="subjects-by-department" element={<SubjectsByDepartment />} />
         <Route path="timetable" element={<AdminTimetable />} />
         <Route path="classrooms" element={<AdminClassrooms />} />
         <Route path="devices" element={<AdminDevices />} />
@@ -141,6 +146,7 @@ export const AppRoutes: React.FC = () => {
       >
         <Route path="dashboard" element={<ParentDashboard />} />
         <Route path="wards" element={<ParentWards />} />
+        <Route path="timetable" element={<ParentTimetable />} />
         <Route path="attendance" element={<ParentAttendanceHistory />} />
         <Route path="analytics" element={<ParentAnalytics />} />
         <Route path="profile" element={<ParentProfile />} />
@@ -156,6 +162,7 @@ export const AppRoutes: React.FC = () => {
         }
       >
         <Route path="dashboard" element={<StudentDashboard />} />
+        <Route path="subjects" element={<StudentSubjects />} />
         <Route path="attendance" element={<StudentAttendanceHistory />} />
         <Route path="history" element={<StudentAttendanceHistory />} />
         <Route path="timetable" element={<StudentTimetable />} />

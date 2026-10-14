@@ -11,6 +11,7 @@ import {
   getStudentAttendanceIssues,
   getStudentProfile,
   updateStudentProfile,
+  getStudentSubjects,
 } from '../controllers/studentController';
 import { authenticate } from '../middleware/auth';
 import { authorize } from '../middleware/rbac';
@@ -21,6 +22,7 @@ const router = Router();
 router.use(authenticate, authorize('STUDENT', 'ADMIN'));
 
 router.get('/dashboard', getStudentDashboard);
+router.get('/subjects', getStudentSubjects);
 router.get('/attendance', getAttendanceHistory);
 router.get('/history', getAttendanceHistory); // Compatibility alias
 router.get('/timetable', getStudentTimetable);

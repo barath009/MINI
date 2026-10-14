@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../../services/api';
 import {
   Upload,
@@ -22,13 +22,22 @@ import {
   Edit2,
   Save,
   RotateCcw,
+  BookOpen,
+  Building,
 } from 'lucide-react';
 
-type TabType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'EXPORT' | 'HISTORY';
+type TabType = 'STUDENTS' | 'FACULTY' | 'ALLOCATIONS' | 'SUBJECTS' | 'EXPORT' | 'HISTORY';
 
 export const BulkImport: React.FC = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<TabType>('STUDENTS');
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const initialTab = (searchParams.get('tab')?.toUpperCase() as TabType) || 'STUDENTS';
+  const initialDept = searchParams.get('dept') || '';
+
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
+  const [departmentsList, setDepartmentsList] = useState<any[]>([]);
+  const [selectedDeptForSubject, setSelectedDeptForSubject] = useState<string>(initialDept);
 
   // File upload state
   const [file, setFile] = useState<File | null>(null);
@@ -61,11 +70,32 @@ export const BulkImport: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Export filters
-  const [exportType, setExportType] = useState<'STUDENTS' | 'FACULTY'>('STUDENTS');
+  const [exportType, setExportType] = useState<'STUDENTS' | 'FACULTY' | 'SUBJECTS'>('STUDENTS');
   const [exportFormat, setExportFormat] = useState<'xlsx' | 'csv'>('xlsx');
   const [exportYear, setExportYear] = useState<string>('');
   const [exportStatus, setExportStatus] = useState<string>('ACTIVE');
+  const [exportDept, setExportDept] = useState<string>('');
   const [exporting, setExporting] = useState(false);
+
+  useEffect(() => {
+    // Load departments list for department-specific workflows
+    api.get('/admin/departments').then(res => {
+      if (res.data?.success) {
+        setDepartmentsList(res.data.data);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab')?.toUpperCase() as TabType;
+    if (tab && ['STUDENTS', 'FACULTY', 'ALLOCATIONS', 'SUBJECTS', 'EXPORT', 'HISTORY'].includes(tab)) {
+      setActiveTab(tab);
+    }
+    const dept = searchParams.get('dept');
+    if (dept) {
+      setSelectedDeptForSubject(dept);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     if (activeTab === 'HISTORY') {
@@ -144,6 +174,9 @@ export const BulkImport: React.FC = () => {
       } else if (activeTab === 'ALLOCATIONS') {
         endpoint = '/import/templates/allocations';
         filename = 'allocation_template.xlsx';
+      } else if (activeTab === 'SUBJECTS') {
+        endpoint = '/import/templates/subjects';
+        filename = 'subjects_template.xlsx';
       }
 
       const res = await api.get(endpoint, { responseType: 'blob' });
@@ -172,6 +205,12 @@ export const BulkImport: React.FC = () => {
       let endpoint = '/import/students/preview';
       if (activeTab === 'FACULTY') endpoint = '/import/faculty/preview';
       if (activeTab === 'ALLOCATIONS') endpoint = '/import/allocations/preview';
+      if (activeTab === 'SUBJECTS') {
+        endpoint = '/import/subjects/preview';
+        if (selectedDeptForSubject) {
+          formData.append('defaultDepartmentId', selectedDeptForSubject);
+        }
+      }
 
       const res = await api.post(endpoint, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -215,6 +254,7 @@ export const BulkImport: React.FC = () => {
       let endpoint = `/import/students/confirm/${previewData.jobId}`;
       if (activeTab === 'FACULTY') endpoint = `/import/faculty/confirm/${previewData.jobId}`;
       if (activeTab === 'ALLOCATIONS') endpoint = `/import/allocations/confirm/${previewData.jobId}`;
+      if (activeTab === 'SUBJECTS') endpoint = `/import/subjects/confirm/${previewData.jobId}`;
 
       const res = await api.post(endpoint, {
         skipDuplicates: true,
@@ -296,12 +336,17 @@ export const BulkImport: React.FC = () => {
     setExporting(true);
     setErrorMessage('');
     try {
-      const endpoint = exportType === 'STUDENTS' ? '/import/export/students' : '/import/export/faculty';
+      let endpoint = '/import/export/students';
+      if (exportType === 'FACULTY') endpoint = '/import/export/faculty';
+      if (exportType === 'SUBJECTS') endpoint = '/import/export/subjects';
+
       const params = new URLSearchParams();
       params.append('format', exportFormat);
       if (exportType === 'STUDENTS') {
         if (exportYear) params.append('year', exportYear);
         if (exportStatus) params.append('status', exportStatus);
+      } else if (exportType === 'SUBJECTS') {
+        if (exportDept) params.append('departmentId', exportDept);
       }
 
       const res = await api.get(`${endpoint}?${params.toString()}`, { responseType: 'blob' });
@@ -396,6 +441,17 @@ export const BulkImport: React.FC = () => {
           Import Allocations
         </button>
         <button
+          onClick={() => setActiveTab('SUBJECTS')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
+            activeTab === 'SUBJECTS'
+              ? 'bg-cyan-600 text-white shadow-lg shadow-cyan-600/20'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          Import Subjects
+        </button>
+        <button
           onClick={() => setActiveTab('EXPORT')}
           className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${
             activeTab === 'EXPORT'
@@ -450,9 +506,20 @@ export const BulkImport: React.FC = () => {
                 </p>
                 <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800/80 text-[11px] text-slate-300 space-y-1">
                   <p className="font-semibold text-slate-200">
-                    Template: {activeTab === 'STUDENTS' ? 'students_template.xlsx' : activeTab === 'FACULTY' ? 'faculty_template.xlsx' : 'allocation_template.xlsx'}
+                    Template:{' '}
+                    {activeTab === 'STUDENTS'
+                      ? 'students_template.xlsx'
+                      : activeTab === 'FACULTY'
+                      ? 'faculty_template.xlsx'
+                      : activeTab === 'ALLOCATIONS'
+                      ? 'allocation_template.xlsx'
+                      : 'subjects_template.xlsx'}
                   </p>
-                  <p className="text-slate-400">Preserves leading zeros on register numbers and phone numbers.</p>
+                  <p className="text-slate-400">
+                    {activeTab === 'SUBJECTS'
+                      ? 'Standard fields: subject_code, subject_name, department_code, semester (1-8), credits.'
+                      : 'Preserves leading zeros on register numbers and phone numbers.'}
+                  </p>
                 </div>
                 <button
                   onClick={handleDownloadTemplate}
@@ -469,6 +536,41 @@ export const BulkImport: React.FC = () => {
                   <Upload className="w-4 h-4" />
                   Step 2: Upload Completed Spreadsheet
                 </div>
+
+                {activeTab === 'SUBJECTS' && (
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2">
+                    <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                      <span className="flex items-center gap-2">
+                        <Building className="w-4 h-4 text-cyan-400" />
+                        Target Engineering Department (Optional Fallback):
+                      </span>
+                      {selectedDeptForSubject && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedDeptForSubject('')}
+                          className="text-[11px] text-cyan-400 hover:text-cyan-300 underline font-normal"
+                        >
+                          Clear Selection
+                        </button>
+                      )}
+                    </label>
+                    <select
+                      value={selectedDeptForSubject}
+                      onChange={e => setSelectedDeptForSubject(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                    >
+                      <option value="">-- All Departments (Specified per row in spreadsheet) --</option>
+                      {departmentsList.map(dept => (
+                        <option key={dept._id} value={dept._id}>
+                          {dept.name} ({dept.code})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-400">
+                      If rows in the Excel file do not specify a <code>department_code</code>, they will automatically be assigned to the selected department.
+                    </p>
+                  </div>
+                )}
 
                 <div
                   onDragEnter={handleDrag}
@@ -767,6 +869,15 @@ export const BulkImport: React.FC = () => {
                             <th className="py-2.5 px-3">Section</th>
                           </>
                         )}
+                        {activeTab === 'SUBJECTS' && (
+                          <>
+                            <th className="py-2.5 px-3">Subject Code</th>
+                            <th className="py-2.5 px-3">Subject Name</th>
+                            <th className="py-2.5 px-3">Department</th>
+                            <th className="py-2.5 px-3">Semester</th>
+                            <th className="py-2.5 px-3">Credits</th>
+                          </>
+                        )}
                         <th className="py-2.5 px-3">Validation Message</th>
                         <th className="py-2.5 px-3 text-right">Actions</th>
                       </tr>
@@ -1021,6 +1132,80 @@ export const BulkImport: React.FC = () => {
                                 </>
                               )}
 
+                              {activeTab === 'SUBJECTS' && (
+                                <>
+                                  <td className="py-2 px-3 font-mono font-bold text-cyan-400">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.subject_code || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, subject_code: e.target.value.toUpperCase() })}
+                                        className="w-24 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono uppercase"
+                                        placeholder="MZ3501"
+                                      />
+                                    ) : (
+                                      r.data.subject_code
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-medium text-slate-200">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.subject_name || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, subject_name: e.target.value })}
+                                        className="w-48 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white"
+                                        placeholder="Course Title"
+                                      />
+                                    ) : (
+                                      r.data.subject_name
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="text"
+                                        value={editingRowData.department_code || ''}
+                                        onChange={e => setEditingRowData({ ...editingRowData, department_code: e.target.value.toUpperCase() })}
+                                        className="w-20 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono uppercase"
+                                        placeholder="MECH"
+                                      />
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px]">
+                                        {r.data.department_code || r.data.resolvedDeptCode || 'N/A'}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-300">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={8}
+                                        value={editingRowData.semester ?? 1}
+                                        onChange={e => setEditingRowData({ ...editingRowData, semester: parseInt(e.target.value, 10) || 1 })}
+                                        className="w-16 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      />
+                                    ) : (
+                                      `Sem ${r.data.semester}`
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 font-mono text-slate-400">
+                                    {isEditing ? (
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        max={10}
+                                        value={editingRowData.credits ?? 3}
+                                        onChange={e => setEditingRowData({ ...editingRowData, credits: parseInt(e.target.value, 10) || 3 })}
+                                        className="w-16 px-2 py-1 bg-slate-950 border border-cyan-500 rounded text-xs text-white font-mono"
+                                      />
+                                    ) : (
+                                      `${r.data.credits || 3} cr`
+                                    )}
+                                  </td>
+                                </>
+                              )}
+
                               <td className="py-2 px-3 text-[11px]">
                                 {r.errors && r.errors.length > 0 ? (
                                   <span className="text-rose-400">{r.errors.join('; ')}</span>
@@ -1128,6 +1313,23 @@ export const BulkImport: React.FC = () => {
                 </div>
               )}
 
+              {activeTab === 'SUBJECTS' && (
+                <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-300 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-cyan-400" />
+                    <span>
+                      Course subjects successfully imported into curriculum structure.
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => navigate('/admin/subjects-by-department')}
+                    className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs"
+                  >
+                    View Subjects by Department &rarr;
+                  </button>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   onClick={() => {
@@ -1166,6 +1368,7 @@ export const BulkImport: React.FC = () => {
               >
                 <option value="STUDENTS">Students Directory</option>
                 <option value="FACULTY">Faculty Accounts</option>
+                <option value="SUBJECTS">Courses &amp; Subjects</option>
               </select>
             </div>
 
@@ -1211,6 +1414,24 @@ export const BulkImport: React.FC = () => {
                   </select>
                 </div>
               </>
+            )}
+
+            {exportType === 'SUBJECTS' && (
+              <div>
+                <label className="block text-slate-400 font-semibold mb-1">Department Filter</label>
+                <select
+                  value={exportDept}
+                  onChange={e => setExportDept(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+                >
+                  <option value="">All Departments</option>
+                  {departmentsList.map(dept => (
+                    <option key={dept._id} value={dept._id}>
+                      {dept.name} ({dept.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
 
@@ -1286,6 +1507,8 @@ export const BulkImport: React.FC = () => {
                                 ? 'bg-cyan-950 text-cyan-400 border border-cyan-800'
                                 : job.importType === 'FACULTY'
                                 ? 'bg-blue-950 text-blue-400 border border-blue-800'
+                                : job.importType === 'SUBJECTS'
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
                                 : 'bg-indigo-950 text-indigo-400 border border-indigo-800'
                             }`}
                           >

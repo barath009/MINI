@@ -97,7 +97,12 @@ export const FacultyDashboard: React.FC = () => {
             {data?.todaySessions?.map((sess: any) => (
               <div key={sess._id} className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs">
                 <div>
-                  <p className="font-bold text-slate-100">{sess.subjectId?.name}</p>
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <p className="font-bold text-slate-100">{sess.subjectId?.name}</p>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950 text-cyan-400 border border-cyan-800">
+                      Year {sess.subjectId?.year || Math.ceil((sess.subjectId?.semester || 1) / 2)} (Sem {sess.subjectId?.semester || 1})
+                    </span>
+                  </div>
                   <p className="text-[11px] text-slate-400">Room {sess.classroomId?.roomNumber} | {sess.startTime} - {sess.endTime}</p>
                 </div>
                 <Badge status={sess.status} />

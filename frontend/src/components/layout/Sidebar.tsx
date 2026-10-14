@@ -40,9 +40,10 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
             { label: 'Faculty', path: '/admin/faculty', icon: UserCheck },
             { label: 'Faculty by Department', path: '/admin/faculty-departments', icon: Building },
             { label: 'Allocations', path: '/admin/allocations', icon: LinkIcon },
-            { label: 'Bulk Import / Export', path: '/admin/bulk-import', icon: FileSpreadsheet },
+            
             { label: 'Biometric Enrollment', path: '/admin/biometric', icon: Scan },
             { label: 'Account Status & Suspension', path: '/admin/user-status-control', icon: ShieldAlert },
+            
           ],
         },
         {
@@ -51,6 +52,7 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
             { label: 'Departments', path: '/admin/departments', icon: Building },
             { label: 'Sections', path: '/admin/sections', icon: Layers },
             { label: 'Subjects', path: '/admin/subjects', icon: BookOpen },
+            { label: 'Subjects by Department', path: '/admin/subject-departments', icon: Building },
             { label: 'Timetable Schedule', path: '/admin/timetable', icon: Calendar },
             { label: 'Classrooms', path: '/admin/classrooms', icon: Building },
           ],
@@ -92,6 +94,7 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
           items: [
             { label: 'Dashboard', path: '/parent/dashboard', icon: LayoutDashboard },
             { label: 'My Wards', path: '/parent/wards', icon: Users },
+            { label: 'Ward Timetable', path: '/parent/timetable', icon: Calendar },
             { label: 'Attendance History', path: '/parent/attendance', icon: CheckSquare },
             { label: 'Attendance Analytics', path: '/parent/analytics', icon: BarChart3 },
             { label: 'My Profile', path: '/parent/profile', icon: UserCheck },
@@ -106,6 +109,7 @@ export const Sidebar: React.FC<{ isOpen?: boolean; onClose?: () => void }> = ({ 
         category: 'STUDENT PORTAL',
         items: [
           { label: 'Dashboard', path: '/student/dashboard', icon: LayoutDashboard },
+          { label: 'My Subjects', path: '/student/subjects', icon: BookOpen },
           { label: 'My Attendance', path: '/student/attendance', icon: CheckSquare },
           { label: 'My Timetable', path: '/student/timetable', icon: Calendar },
           { label: 'Attendance Analytics', path: '/student/analytics', icon: BarChart3 },

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useSocket } from '../../context/SocketContext';
-import { Camera, LogOut, Search, Menu, ShieldCheck } from 'lucide-react';
+import { Camera, LogOut, Search, Menu, ShieldCheck, Key, Settings as SettingsIcon } from 'lucide-react';
 import { ThemeToggle } from '../common/ThemeToggle';
 
 export const Navbar: React.FC<{ onToggleSidebar?: () => void }> = ({ onToggleSidebar }) => {
@@ -88,16 +88,28 @@ export const Navbar: React.FC<{ onToggleSidebar?: () => void }> = ({ onToggleSid
               </div>
 
               {(user?.role === 'ADMIN' || user?.role === 'MODERATOR') && (
-                <button
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    navigate('/biometric-scanner');
-                  }}
-                  className="w-full text-left px-3.5 py-2 text-blue-400 hover:bg-blue-500/10 flex items-center gap-2 transition-colors font-semibold"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  Live Biometric Scanner
-                </button>
+                <>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      navigate('/admin/settings');
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-cyan-300 hover:bg-cyan-500/10 flex items-center gap-2 transition-colors font-semibold"
+                  >
+                    <Key className="w-3.5 h-3.5 text-cyan-400" />
+                    Account &amp; Password
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowProfileMenu(false);
+                      navigate('/biometric-scanner');
+                    }}
+                    className="w-full text-left px-3.5 py-2 text-blue-400 hover:bg-blue-500/10 flex items-center gap-2 transition-colors font-semibold"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    Live Biometric Scanner
+                  </button>
+                </>
               )}
 
               <button

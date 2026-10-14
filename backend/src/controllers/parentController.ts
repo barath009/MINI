@@ -4,6 +4,7 @@ import { ParentWard } from '../models/ParentWard';
 import { Student } from '../models/Student';
 import { AttendanceRecord } from '../models/AttendanceRecord';
 import { ClassAllocation } from '../models/ClassAllocation';
+import { Timetable } from '../models/Timetable';
 import mongoose from 'mongoose';
 
 export const getParentDashboard = async (req: any, res: Response, next: NextFunction) => {
@@ -354,3 +355,57 @@ export const getWardAttendanceSummary = async (req: any, res: Response, next: Ne
     next(error);
   }
 };
+
+export const getWardTimetable = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const studentId = req.params.studentId;
+    const student = await Student.findById(studentId);
+    if (!student) throw new AppError('Student profile not found.', 404);
+
+    const timetableRecords = await Timetable.find({
+      sectionId: student.sectionId,
+      status: 'ACTIVE',
+    })
+      .sort({ periodNumber: 1 })
+      .populate('subjectId')
+      .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+      .populate('classroomId')
+      .lean();
+
+    const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    const currentDay = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][new Date().getDay()];
+
+    const grouped: Record<string, any[]> = {};
+    daysOfWeek.forEach((day) => {
+      grouped[day] = [];
+    });
+
+    timetableRecords.forEach((t: any) => {
+      if (grouped[t.dayOfWeek]) {
+        grouped[t.dayOfWeek].push({
+          id: t._id,
+          periodNumber: t.periodNumber,
+          startTime: t.startTime,
+          endTime: t.endTime,
+          subjectName: t.subjectId?.name || 'Class Subject',
+          subjectCode: t.subjectId?.code || 'SUB',
+          facultyName: t.facultyId?.userId?.name || 'Assigned Faculty',
+          classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
+          classType: 'Theory',
+        });
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        currentDay,
+        weeklySchedule: grouped,
+        hasPublishedTimetable: timetableRecords.length > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

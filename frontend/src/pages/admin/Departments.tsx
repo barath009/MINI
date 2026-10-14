@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../services/api';
-import { Building, Plus, Users, Search, GraduationCap, X, CheckCircle, Clock, Edit, Trash2 } from 'lucide-react';
+import { Building, Plus, Users, Search, GraduationCap, X, CheckCircle, Clock, Edit, Trash2, AlertTriangle } from 'lucide-react';
 import { Modal } from '../../components/common/Modal';
 import { Badge } from '../../components/common/Badge';
 
@@ -12,6 +12,11 @@ export const AdminDepartments: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [successMessage, setSuccessMessage] = useState('');
   const [formError, setFormError] = useState('');
+
+  // Delete Modals State
+  const [deptToDelete, setDeptToDelete] = useState<any | null>(null);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Selected Department for Student Inspection Modal
   const [selectedDept, setSelectedDept] = useState<any | null>(null);
@@ -67,16 +72,34 @@ export const AdminDepartments: React.FC = () => {
     setShowModal(true);
   };
 
-  const handleDeleteDepartment = async (e: React.MouseEvent, dept: any) => {
-    e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to delete department '${dept.code} - ${dept.name}'?`)) return;
+  const confirmDeleteDepartment = async () => {
+    if (!deptToDelete) return;
+    setIsDeleting(true);
     try {
-      await api.delete(`/admin/departments/${dept._id}`);
-      setSuccessMessage(`Department '${dept.code}' deleted successfully.`);
-      setTimeout(() => setSuccessMessage(''), 3000);
+      const res = await api.delete(`/admin/departments/${deptToDelete._id}`);
+      setSuccessMessage(res.data?.message || `Department '${deptToDelete.code}' deleted successfully.`);
+      setDeptToDelete(null);
+      setTimeout(() => setSuccessMessage(''), 4000);
       fetchDepts();
     } catch (err: any) {
       alert(err.response?.data?.message || 'Failed to delete department');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteAllDepartments = async () => {
+    setIsDeleting(true);
+    try {
+      const res = await api.delete('/admin/departments/all');
+      setSuccessMessage(res.data?.message || 'All departments removed successfully.');
+      setShowDeleteAllModal(false);
+      setTimeout(() => setSuccessMessage(''), 4000);
+      fetchDepts();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to delete all departments');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -127,12 +150,24 @@ export const AdminDepartments: React.FC = () => {
             Institutional academic departments directory. Click on any department to view enrolled students.
           </p>
         </div>
-        <button
-          onClick={handleOpenAddModal}
-          className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-900/20"
-        >
-          <Plus className="w-4 h-4" /> Add Department
-        </button>
+        <div className="flex items-center gap-2">
+          {departments.length > 0 && (
+            <button
+              onClick={() => setShowDeleteAllModal(true)}
+              className="px-3.5 py-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/70 border border-rose-800/60 text-rose-300 text-xs font-bold flex items-center gap-1.5 transition-colors"
+              title="Delete All Departments"
+            >
+              <Trash2 className="w-4 h-4 text-rose-400" />
+              Delete All Departments
+            </button>
+          )}
+          <button
+            onClick={handleOpenAddModal}
+            className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-900/20"
+          >
+            <Plus className="w-4 h-4" /> Add Department
+          </button>
+        </div>
       </div>
 
       {successMessage && (
@@ -153,22 +188,32 @@ export const AdminDepartments: React.FC = () => {
               onClick={() => openDeptDetails(d)}
               className="glass-card p-4 rounded-2xl border border-slate-800/80 hover:border-cyan-500/50 transition-all duration-200 cursor-pointer group space-y-3 relative overflow-hidden"
             >
-              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-xl group-hover:bg-cyan-500/10 transition-all" />
+              <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-xl group-hover:bg-cyan-500/10 transition-all pointer-events-none" />
 
               <div className="flex items-start justify-between">
                 <div className="w-10 h-10 rounded-xl bg-cyan-950/60 border border-cyan-800/50 flex items-center justify-center text-cyan-400 font-mono font-bold text-xs group-hover:scale-105 transition-transform">
                   {d.code}
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 relative z-20">
                   <button
-                    onClick={(e) => handleOpenEditModal(e, d)}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleOpenEditModal(e, d);
+                    }}
                     className="p-1.5 rounded-lg bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border border-cyan-800/60 transition-colors"
                     title="Edit Department"
                   >
                     <Edit className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={(e) => handleDeleteDepartment(e, d)}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setDeptToDelete(d);
+                    }}
                     className="p-1.5 rounded-lg bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800/60 transition-colors"
                     title="Delete Department"
                   >
@@ -334,6 +379,87 @@ export const AdminDepartments: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Delete Department Confirmation Modal */}
+      <Modal
+        isOpen={!!deptToDelete}
+        onClose={() => !isDeleting && setDeptToDelete(null)}
+        title="Confirm Delete Department"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-800/80 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-rose-200 text-sm">Permanent Action Warning</h4>
+              <p className="text-rose-300/90 leading-relaxed">
+                Are you sure you want to delete department <strong className="text-cyan-300 font-bold">{deptToDelete?.code} - {deptToDelete?.name}</strong>?
+              </p>
+              {deptToDelete?.studentCount > 0 && (
+                <p className="text-amber-300 text-[11px] font-semibold mt-1">
+                  ⚠️ Note: This department currently has {deptToDelete.studentCount} enrolled student(s). Deleting will safely dissociate them from this department.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={() => setDeptToDelete(null)}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={confirmDeleteDepartment}
+              className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-rose-900/30"
+            >
+              {isDeleting ? 'Deleting...' : 'Yes, Delete Department'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete All Departments Confirmation Modal */}
+      <Modal
+        isOpen={showDeleteAllModal}
+        onClose={() => !isDeleting && setShowDeleteAllModal(false)}
+        title="Confirm Delete All Departments"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-4 rounded-xl bg-rose-950/60 border border-rose-800/80 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <h4 className="font-extrabold text-rose-200 text-sm">Destructive Action Warning</h4>
+              <p className="text-rose-300/90 leading-relaxed">
+                Are you sure you want to delete <strong className="text-rose-400 font-bold">ALL {departments.length}</strong> engineering departments across the institution?
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={() => setShowDeleteAllModal(false)}
+              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isDeleting}
+              onClick={handleDeleteAllDepartments}
+              className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold flex items-center gap-2 shadow-lg shadow-rose-900/30"
+            >
+              {isDeleting ? 'Deleting...' : 'Yes, Delete All'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

@@ -7,20 +7,43 @@
  */
 import * as faceapi from 'face-api.js';
 
-const MODEL_URL = '/models';
+const LOCAL_MODEL_URL = '/models';
+// Reliable CDN fallback hosted on jsdelivr/github for face-api weights
+const CDN_MODEL_URL = 'https://cdn.jsdelivr.net/gh/cgarciagl/face-api.js@master/weights';
 
 let modelsLoaded = false;
 
-/** Load all required face-api.js models once */
+/** Load all required face-api.js models with local-first and CDN fallback */
 export async function loadFaceModels(): Promise<void> {
   if (modelsLoaded) return;
-  await Promise.all([
-    faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-  ]);
-  modelsLoaded = true;
-  console.log('[FaceAPI] Models loaded ✓');
+
+  // Try loading from local /models first
+  try {
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri(LOCAL_MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(LOCAL_MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(LOCAL_MODEL_URL),
+    ]);
+    modelsLoaded = true;
+    console.log('[FaceAPI] Models loaded successfully from local /models ✓');
+    return;
+  } catch (localErr) {
+    console.warn('[FaceAPI] Local /models loading failed, falling back to CDN...', localErr);
+  }
+
+  // Fallback to CDN if local static asset serving or Vercel routing blocked shards
+  try {
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri(CDN_MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(CDN_MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(CDN_MODEL_URL),
+    ]);
+    modelsLoaded = true;
+    console.log('[FaceAPI] Models loaded successfully from CDN fallback ✓');
+  } catch (cdnErr) {
+    console.error('[FaceAPI] Failed to load models from both local /models and CDN fallback:', cdnErr);
+    throw new Error('Could not load Face AI models from local or CDN. Check network connection.');
+  }
 }
 
 /**

@@ -246,9 +246,17 @@ export const StudentDashboard: React.FC = () => {
       {/* Subject Wise Breakdown */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-sm text-slate-200">Subject-wise Attendance Breakdown</h2>
-          <Link to="/student/attendance" className="text-xs text-cyan-400 hover:underline">
-            View Detailed History &rarr;
+          <div>
+            <h2 className="font-bold text-sm text-slate-200 flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-cyan-400" />
+              Department Subjects ({student.department || 'Curriculum'} - Sem {student.semester})
+            </h2>
+            <p className="text-[11px] text-slate-400">
+              Enrolled course subjects according to your academic department
+            </p>
+          </div>
+          <Link to="/student/subjects" className="text-xs text-cyan-400 hover:underline flex items-center gap-1 font-semibold">
+            All Curriculum Subjects &rarr;
           </Link>
         </div>
 
@@ -256,7 +264,14 @@ export const StudentDashboard: React.FC = () => {
           {data?.subjectBreakdown?.map((sub: any) => (
             <div key={sub.subjectId} className="glass-card p-4 rounded-2xl border border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="font-mono font-bold text-cyan-400 text-xs">{sub.subjectCode}</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono font-bold text-cyan-400 text-xs px-2 py-0.5 rounded bg-cyan-950/80 border border-cyan-800/80">
+                    {sub.subjectCode}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-400">
+                    {sub.credits || 3} Cr
+                  </span>
+                </div>
                 <Badge status={sub.status} />
               </div>
               <div>

@@ -47,6 +47,7 @@ export const createSubjectSchema = z.object({
   code: z.string().min(2, 'Subject code is required'),
   name: z.string().min(2, 'Subject name is required'),
   departmentId: z.string().min(1, 'Department is required'),
+  year: z.number().min(1).max(4).optional(),
   semester: z.number().min(1).max(10),
   credits: z.number().min(1).max(10).default(3),
 });

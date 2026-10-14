@@ -72,11 +72,14 @@ export const ParentManagement: React.FC = () => {
 
       const res = await api.get('/admin/parents', { params });
       if (res.data.success) {
-        setParents(res.data.data);
-        setPagination(res.data.pagination);
+        setParents(Array.isArray(res.data.data) ? res.data.data : []);
+        setPagination(res.data.pagination || { total: 0, totalPages: 1 });
+      } else {
+        setParents([]);
       }
     } catch (err) {
       console.error(err);
+      setParents([]);
     } finally {
       setLoading(false);
     }
@@ -86,10 +89,18 @@ export const ParentManagement: React.FC = () => {
     try {
       const res = await api.get('/admin/students?limit=200');
       if (res.data.success) {
-        setStudentsList(res.data.data);
+        const list = Array.isArray(res.data.data)
+          ? res.data.data
+          : Array.isArray(res.data.data?.students)
+          ? res.data.data.students
+          : [];
+        setStudentsList(list);
+      } else {
+        setStudentsList([]);
       }
     } catch (err) {
       console.error(err);
+      setStudentsList([]);
     }
   };
 
@@ -139,19 +150,21 @@ export const ParentManagement: React.FC = () => {
 
   const handleViewParent = async (parent: any) => {
     try {
-      const res = await api.get(`/admin/parents/${parent.id}`);
+      const pId = parent.id || parent._id;
+      const res = await api.get(`/admin/parents/${pId}`);
       if (res.data.success) {
         setSelectedParent(res.data.data);
         setShowViewModal(true);
       }
     } catch (err) {
       console.error(err);
+      alert(formatErrorMessage(err, 'Failed to fetch parent details.'));
     }
   };
 
   const handleOpenEdit = (parent: any) => {
     setSelectedParent(parent);
-    setEditFormData({ name: parent.name, phone: parent.phone || '' });
+    setEditFormData({ name: parent.name || '', phone: parent.phone || '' });
     setShowEditModal(true);
   };
 
@@ -160,7 +173,8 @@ export const ParentManagement: React.FC = () => {
     setFormError('');
     setSubmitting(true);
     try {
-      const res = await api.patch(`/admin/parents/${selectedParent.id}`, editFormData);
+      const pId = selectedParent.id || selectedParent._id;
+      const res = await api.patch(`/admin/parents/${pId}`, editFormData);
       if (res.data.success) {
         setShowEditModal(false);
         fetchParents();
@@ -177,7 +191,8 @@ export const ParentManagement: React.FC = () => {
     if (!window.confirm(`Are you sure you want to change this parent account to ${nextStatus}?`)) return;
 
     try {
-      const res = await api.patch(`/admin/parents/${parent.id}/status`, { status: nextStatus });
+      const pId = parent.id || parent._id;
+      const res = await api.patch(`/admin/parents/${pId}/status`, { status: nextStatus });
       if (res.data.success) {
         fetchParents();
       }
@@ -202,7 +217,8 @@ export const ParentManagement: React.FC = () => {
     setFormError('');
     setSubmitting(true);
     try {
-      const res = await api.post(`/admin/parents/${selectedParent.id}/wards`, assignWardData);
+      const pId = selectedParent.id || selectedParent._id;
+      const res = await api.post(`/admin/parents/${pId}/wards`, assignWardData);
       if (res.data.success) {
         setShowAssignWardModal(false);
         fetchParents();
@@ -233,9 +249,10 @@ export const ParentManagement: React.FC = () => {
   };
 
   const handleResetPassword = async (parent: any) => {
-    if (!window.confirm(`Reset password for parent "${parent.name}"? A new secure temporary password will be generated.`)) return;
+    if (!window.confirm(`Reset password for parent "${parent.name || 'this parent'}"? A new secure temporary password will be generated.`)) return;
     try {
-      const res = await api.post(`/admin/parents/${parent.id}/reset-password`);
+      const pId = parent.id || parent._id;
+      const res = await api.post(`/admin/parents/${pId}/reset-password`);
       if (res.data.success) {
         setTempPasswordModal(res.data.data.temporaryPassword);
       }
@@ -338,77 +355,83 @@ export const ParentManagement: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                parents.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-800/30 transition-colors">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-7 h-7 rounded-lg bg-blue-600/10 border border-blue-500/20 text-blue-400 font-extrabold text-xs flex items-center justify-center">
-                          {p.name.charAt(0).toUpperCase()}
+                (parents || []).map((p: any) => {
+                  const pId = p.id || p._id;
+                  const initialLetter = (p.name || 'P').trim().charAt(0).toUpperCase() || 'P';
+                  const dateStr = p.createdAt
+                    ? new Date(p.createdAt).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : '—';
+
+                  return (
+                    <tr key={pId} className="hover:bg-slate-800/30 transition-colors">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-blue-600/10 border border-blue-500/20 text-blue-400 font-extrabold text-xs flex items-center justify-center">
+                            {initialLetter}
+                          </div>
+                          <span className="font-bold text-slate-100">{p.name || 'Unnamed Parent'}</span>
                         </div>
-                        <span className="font-bold text-slate-100">{p.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 font-mono text-slate-400">{p.email}</td>
-                    <td className="py-3 px-4 font-mono text-slate-400">{p.phone || '—'}</td>
-                    <td className="py-3 px-4 text-center">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
-                          p.wardCount > 0 ? 'bg-blue-950/80 text-blue-400 border border-blue-800' : 'bg-slate-800 text-slate-500'
-                        }`}
-                      >
-                        <GraduationCap className="w-3 h-3" />
-                        {p.wardCount} {p.wardCount === 1 ? 'Ward' : 'Wards'}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <Badge status={p.status === 'ACTIVE' ? 'SAFE' : 'CRITICAL'} text={p.status} />
-                    </td>
-                    <td className="py-3 px-4 text-slate-400">
-                      {new Date(p.createdAt).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          onClick={() => handleViewParent(p)}
-                          title="View Parent & Linked Wards"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-slate-800/80 transition-colors"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenAssignWard(p)}
-                          title="Assign Student Ward"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800/80 transition-colors"
-                        >
-                          <LinkIcon className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenEdit(p)}
-                          title="Edit Details"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 transition-colors"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleResetPassword(p)}
-                          title="Reset Password"
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800/80 transition-colors"
-                        >
-                          <KeyRound className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleStatus(p)}
-                          title={p.status === 'ACTIVE' ? 'Deactivate Account' : 'Activate Account'}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            p.status === 'ACTIVE' ? 'text-slate-400 hover:text-rose-400' : 'text-slate-400 hover:text-emerald-400'
+                      </td>
+                      <td className="py-3 px-4 font-mono text-slate-400">{p.email}</td>
+                      <td className="py-3 px-4 font-mono text-slate-400">{p.phone || '—'}</td>
+                      <td className="py-3 px-4 text-center">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-bold text-[11px] ${
+                            (p.wardCount || 0) > 0 ? 'bg-blue-950/80 text-blue-400 border border-blue-800' : 'bg-slate-800 text-slate-500'
                           }`}
                         >
-                          {p.status === 'ACTIVE' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          <GraduationCap className="w-3 h-3" />
+                          {p.wardCount || 0} {(p.wardCount || 0) === 1 ? 'Ward' : 'Wards'}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <Badge status={p.status === 'ACTIVE' ? 'SAFE' : 'CRITICAL'} text={p.status || 'INACTIVE'} />
+                      </td>
+                      <td className="py-3 px-4 text-slate-400">{dateStr}</td>
+                      <td className="py-3 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => handleViewParent(p)}
+                            title="View Parent & Linked Wards"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-blue-400 hover:bg-slate-800/80 transition-colors"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenAssignWard(p)}
+                            title="Assign Student Ward"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-400 hover:bg-slate-800/80 transition-colors"
+                          >
+                            <LinkIcon className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleOpenEdit(p)}
+                            title="Edit Details"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-800/80 transition-colors"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleResetPassword(p)}
+                            title="Reset Password"
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800/80 transition-colors"
+                          >
+                            <KeyRound className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleToggleStatus(p)}
+                            title={p.status === 'ACTIVE' ? 'Deactivate Account' : 'Activate Account'}
+                            className={`p-1.5 rounded-lg transition-colors ${
+                              p.status === 'ACTIVE' ? 'text-slate-400 hover:text-rose-400' : 'text-slate-400 hover:text-emerald-400'
+                            }`}
+                          >
+                            {p.status === 'ACTIVE' ? <UserX className="w-4 h-4" /> : <UserCheck className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -418,7 +441,7 @@ export const ParentManagement: React.FC = () => {
         {pagination.totalPages > 1 && (
           <div className="py-3 px-4 bg-slate-950/40 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
             <span>
-              Showing Page {pagination.page} of {pagination.totalPages} ({pagination.total} Parents)
+              Showing Page {page} of {pagination.totalPages} ({pagination.total} Parents)
             </span>
             <div className="flex gap-2">
               <button
@@ -521,11 +544,18 @@ export const ParentManagement: React.FC = () => {
               className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
             >
               <option value="">— Select a student to link —</option>
-              {studentsList.map((st) => (
-                <option key={st._id || st.id} value={st._id || st.id}>
-                  {st.name || st.userId?.name} ({st.registerNumber} - {st.rollNumber})
-                </option>
-              ))}
+              {Array.isArray(studentsList) &&
+                studentsList.map((st: any) => {
+                  const studentName = st.name || st.userId?.name || 'Unnamed Student';
+                  const regNo = st.registerNumber || '';
+                  const rollNo = st.rollNumber || '';
+                  const code = regNo ? ` (${regNo}${rollNo ? ` - ${rollNo}` : ''})` : '';
+                  return (
+                    <option key={st._id || st.id} value={st._id || st.id}>
+                      {studentName}{code}
+                    </option>
+                  );
+                })}
             </select>
             <p className="text-[10px] text-slate-500 mt-1">You can also link more students after creating the account.</p>
           </div>
@@ -697,11 +727,18 @@ export const ParentManagement: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
               >
                 <option value="">— Select Student —</option>
-                {studentsList.map((st) => (
-                  <option key={st._id || st.id} value={st._id || st.id}>
-                    {st.name || st.userId?.name} ({st.registerNumber} - {st.rollNumber})
-                  </option>
-                ))}
+                {Array.isArray(studentsList) &&
+                  studentsList.map((st: any) => {
+                    const studentName = st.name || st.userId?.name || 'Unnamed Student';
+                    const regNo = st.registerNumber || '';
+                    const rollNo = st.rollNumber || '';
+                    const code = regNo ? ` (${regNo}${rollNo ? ` - ${rollNo}` : ''})` : '';
+                    return (
+                      <option key={st._id || st.id} value={st._id || st.id}>
+                        {studentName}{code}
+                      </option>
+                    );
+                  })}
               </select>
             </div>
 

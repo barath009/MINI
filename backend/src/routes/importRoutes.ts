@@ -6,14 +6,18 @@ import {
   getStudentTemplate,
   getFacultyTemplate,
   getAllocationTemplate,
+  getSubjectTemplate,
   previewStudentImport,
   confirmStudentImport,
   previewFacultyImport,
   confirmFacultyImport,
   previewAllocationImport,
   confirmAllocationImport,
+  previewSubjectImport,
+  confirmSubjectImport,
   exportStudents,
   exportFaculty,
+  exportSubjects,
   getImportHistory,
   getImportJobDetail,
   downloadErrorReport,
@@ -54,6 +58,7 @@ router.use(authenticate, authorize('ADMIN', 'MODERATOR'));
 router.get('/templates/students', getStudentTemplate);
 router.get('/templates/faculty', getFacultyTemplate);
 router.get('/templates/allocations', getAllocationTemplate);
+router.get('/templates/subjects', getSubjectTemplate);
 
 // Student Import
 router.post('/students/preview', upload.single('file'), previewStudentImport);
@@ -67,9 +72,14 @@ router.post('/faculty/confirm/:jobId', confirmFacultyImport);
 router.post('/allocations/preview', upload.single('file'), previewAllocationImport);
 router.post('/allocations/confirm/:jobId', confirmAllocationImport);
 
+// Subject Import
+router.post('/subjects/preview', upload.single('file'), previewSubjectImport);
+router.post('/subjects/confirm/:jobId', confirmSubjectImport);
+
 // Exports
 router.get('/export/students', exportStudents);
 router.get('/export/faculty', exportFaculty);
+router.get('/export/subjects', exportSubjects);
 
 // History, Details, Errors, and Cancel
 router.get('/history', getImportHistory);

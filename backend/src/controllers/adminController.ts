@@ -604,9 +604,67 @@ export const updateDepartment = async (req: any, res: Response, next: NextFuncti
 export const deleteDepartment = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
+    const dept = await Department.findById(id);
+    if (!dept) {
+      throw new AppError('Department not found', 404);
+    }
+
     await Department.findByIdAndDelete(id);
-    await createAuditLog(req.user._id, 'DELETE_DEPARTMENT', 'Department', id);
-    res.status(200).json({ success: true, message: 'Department deleted successfully.' });
+
+    // Safely unassign references so no orphaned foreign keys remain
+    await Promise.all([
+      Student.updateMany({ departmentId: id }, { $unset: { departmentId: '' } }),
+      Faculty.updateMany({ departmentId: id }, { $unset: { departmentId: '' } }),
+      Section.deleteMany({ departmentId: id }),
+      Subject.deleteMany({ departmentId: id }),
+    ]);
+
+    await createAuditLog(req.user._id, 'DELETE_DEPARTMENT', 'Department', id, {
+      code: dept.code,
+      name: dept.name,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Department '${dept.code} - ${dept.name}' deleted successfully.`,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAllDepartments = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const ids = req.body?.ids;
+    let filter: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      filter._id = { $in: ids };
+    }
+
+    const deptsToDelete = await Department.find(filter).select('_id code name');
+    const deptIds = deptsToDelete.map((d) => d._id);
+
+    const result = await Department.deleteMany(filter);
+
+    if (deptIds.length > 0) {
+      await Promise.all([
+        Student.updateMany({ departmentId: { $in: deptIds } }, { $unset: { departmentId: '' } }),
+        Faculty.updateMany({ departmentId: { $in: deptIds } }, { $unset: { departmentId: '' } }),
+        Section.deleteMany({ departmentId: { $in: deptIds } }),
+        Subject.deleteMany({ departmentId: { $in: deptIds } }),
+      ]);
+    }
+
+    await createAuditLog(req.user._id, 'DELETE_ALL_DEPARTMENTS', 'Department', 'ALL', {
+      deletedCount: result.deletedCount,
+      departments: deptsToDelete.map((d) => d.code),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} department(s).`,
+      deletedCount: result.deletedCount,
+    });
   } catch (error) {
     next(error);
   }
@@ -643,6 +701,42 @@ export const createSection = async (req: Request, res: Response, next: NextFunct
   }
 };
 
+export const updateSection = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { id } = req.params;
+    const { name, departmentId, year, semester, academicYear } = req.body;
+
+    const section = await Section.findById(id);
+    if (!section) throw new AppError('Section not found', 404);
+
+    if (name) section.name = name.trim();
+    if (departmentId) section.departmentId = departmentId;
+    if (year !== undefined) section.year = Number(year);
+    if (semester !== undefined) section.semester = Number(semester);
+    if (academicYear) section.academicYear = academicYear.trim();
+
+    await section.save();
+
+    const populated = await Section.findById(section._id).populate('departmentId');
+
+    await createAuditLog(req.user._id, 'UPDATE_SECTION', 'Section', id, {
+      name: section.name,
+      departmentId: section.departmentId,
+      year: section.year,
+      semester: section.semester,
+      academicYear: section.academicYear,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Section '${section.name}' updated successfully.`,
+      data: populated || section,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const deleteSection = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
@@ -657,7 +751,19 @@ export const deleteSection = async (req: any, res: Response, next: NextFunction)
 
 export const getSubjects = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const subjects = await Subject.find().populate('departmentId').sort({ code: 1 });
+    const { departmentId, semester, year } = req.query;
+    const filter: any = {};
+    if (departmentId && departmentId !== 'ALL') {
+      filter.departmentId = departmentId;
+    }
+    if (semester && semester !== 'ALL') {
+      filter.semester = Number(semester);
+    }
+    if (year && year !== 'ALL') {
+      filter.year = Number(year);
+    }
+
+    const subjects = await Subject.find(filter).populate('departmentId').sort({ year: 1, semester: 1, code: 1 });
     res.status(200).json({ success: true, data: subjects });
   } catch (error) {
     next(error);
@@ -667,8 +773,10 @@ export const getSubjects = async (req: Request, res: Response, next: NextFunctio
 export const createSubject = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const data = createSubjectSchema.parse(req.body);
-    const subject = await Subject.create(data);
-    res.status(201).json({ success: true, message: 'Subject created', data: subject });
+    const year = data.year || Math.ceil(data.semester / 2);
+    const subject = await Subject.create({ ...data, year });
+    const populated = await Subject.findById(subject._id).populate('departmentId');
+    res.status(201).json({ success: true, message: 'Subject created', data: populated || subject });
   } catch (error) {
     next(error);
   }
@@ -685,18 +793,47 @@ export const deleteSubject = async (req: any, res: Response, next: NextFunction)
   }
 };
 
+export const deleteAllSubjects = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const departmentId = req.query.departmentId || req.body?.departmentId;
+    const ids = req.body?.ids;
+
+    let filter: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      filter._id = { $in: ids };
+    } else if (departmentId && departmentId !== 'ALL') {
+      filter.departmentId = departmentId;
+    }
+
+    const result = await Subject.deleteMany(filter);
+    await createAuditLog(req.user._id, 'DELETE_ALL_SUBJECTS', 'Subject', 'ALL', {
+      deletedCount: result.deletedCount,
+      filter,
+    });
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} subjects.`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const updateSubject = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    const { code, name, departmentId, semester, credits } = req.body;
+    const { code, name, departmentId, year, semester, credits } = req.body;
     const subject = await Subject.findById(id);
     if (!subject) throw new AppError('Subject not found', 404);
 
     if (code) subject.code = code;
     if (name) subject.name = name;
     if (departmentId) subject.departmentId = departmentId;
-    if (semester) subject.semester = semester;
-    if (credits) subject.credits = credits;
+    if (year) subject.year = Number(year);
+    else if (semester) subject.year = Math.ceil(Number(semester) / 2);
+    if (semester) subject.semester = Number(semester);
+    if (credits) subject.credits = Number(credits);
     await subject.save();
 
     await createAuditLog(req.user._id, 'UPDATE_SUBJECT', 'Subject', id);
@@ -913,6 +1050,35 @@ export const deleteClassroom = async (req: any, res: Response, next: NextFunctio
   }
 };
 
+export const deleteAllClassrooms = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const departmentId = req.query.departmentId || req.body?.departmentId;
+    const sectionId = req.query.sectionId || req.body?.sectionId;
+    const ids = req.body?.ids;
+
+    let filter: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      filter._id = { $in: ids };
+    } else {
+      if (departmentId) filter.departmentId = departmentId;
+      if (sectionId) filter.sectionId = sectionId;
+    }
+
+    const result = await Classroom.deleteMany(filter);
+    await createAuditLog(req.user._id, 'DELETE_ALL_CLASSROOMS', 'Classroom', 'ALL', {
+      deletedCount: result.deletedCount,
+      filter,
+    });
+    res.status(200).json({
+      success: true,
+      message: `Successfully deleted ${result.deletedCount} classroom(s).`,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const deleteSession = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
@@ -920,6 +1086,40 @@ export const deleteSession = async (req: any, res: Response, next: NextFunction)
     await AttendanceRecord.deleteMany({ sessionId: id });
     await createAuditLog(req.user._id, 'DELETE_SESSION', 'AttendanceSession', id);
     res.status(200).json({ success: true, message: 'Classroom time slot session removed successfully.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAllSessions = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const ids = req.body?.ids;
+    const sectionId = req.query.sectionId || req.body?.sectionId;
+
+    let filter: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      filter._id = { $in: ids };
+    } else if (sectionId) {
+      filter.sectionId = sectionId;
+    }
+
+    const sessionsToDelete = await AttendanceSession.find(filter).select('_id');
+    const sessionIds = sessionsToDelete.map((s) => s._id);
+
+    const result = await AttendanceSession.deleteMany(filter);
+    if (sessionIds.length > 0) {
+      await AttendanceRecord.deleteMany({ sessionId: { $in: sessionIds } });
+    }
+
+    await createAuditLog(req.user._id, 'DELETE_ALL_SESSIONS', 'AttendanceSession', 'ALL', {
+      deletedCount: result.deletedCount,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully removed ${result.deletedCount} time slot session(s).`,
+      deletedCount: result.deletedCount,
+    });
   } catch (error) {
     next(error);
   }
@@ -1015,9 +1215,18 @@ export const updateSetting = async (req: any, res: Response, next: NextFunction)
 };
 
 // Moderator & Administrator Management (Admin Only)
+export const getAdmins = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const admins = await User.find({ role: 'ADMIN' }).select('-passwordHash').sort({ createdAt: -1 });
+    res.status(200).json({ success: true, data: admins });
+  } catch (error) {
+    next(error);
+  }
+};
+
 export const getModerators = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const moderators = await User.find({ role: { $in: ['ADMIN', 'MODERATOR'] } }).select('-passwordHash').sort({ createdAt: -1 });
+    const moderators = await User.find({ role: 'MODERATOR' }).select('-passwordHash').sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: moderators });
   } catch (error) {
     next(error);
@@ -1064,13 +1273,13 @@ export const createAdminUser = async (req: any, res: Response, next: NextFunctio
     const { name, email, password } = req.body;
     if (!name || !email || !password) throw new AppError('Name, email, and password are required', 400);
 
-    const existing = await User.findOne({ email: email.toLowerCase() });
+    const existing = await User.findOne({ email: email.toLowerCase().trim() });
     if (existing) throw new AppError('Email is already registered', 409);
 
     const passwordHash = await bcrypt.hash(password, 10);
     const newAdmin = await User.create({
-      name,
-      email: email.toLowerCase(),
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
       passwordHash,
       role: 'ADMIN',
       status: 'ACTIVE',
@@ -1080,7 +1289,35 @@ export const createAdminUser = async (req: any, res: Response, next: NextFunctio
       email: newAdmin.email,
       name: newAdmin.name,
     });
-    res.status(201).json({ success: true, message: 'Admin account created successfully.', data: newAdmin });
+    res.status(201).json({ success: true, message: 'Administrator account created successfully.', data: newAdmin });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAdminUser = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (req.user.role !== 'ADMIN') {
+      throw new AppError('Access Denied: Only Administrators can remove Administrator accounts.', 403);
+    }
+
+    const { id } = req.params;
+    if (req.user._id.toString() === id.toString()) {
+      throw new AppError('Safety Protection: You cannot delete your own active Administrator account.', 400);
+    }
+
+    const adminCount = await User.countDocuments({ role: 'ADMIN' });
+    if (adminCount <= 1) {
+      throw new AppError('System Protection: At least one Administrator account must remain in the system.', 400);
+    }
+
+    const targetUser = await User.findById(id);
+    if (!targetUser) throw new AppError('Administrator account not found', 404);
+    if (targetUser.role !== 'ADMIN') throw new AppError('User is not an administrator', 400);
+
+    await User.findByIdAndDelete(id);
+    await createAuditLog(req.user._id, 'DELETE_ADMIN', 'User', id, { email: targetUser.email, name: targetUser.name });
+    res.status(200).json({ success: true, message: `Administrator account '${targetUser.email}' removed successfully.` });
   } catch (error) {
     next(error);
   }
@@ -1095,7 +1332,7 @@ export const deleteModerator = async (req: any, res: Response, next: NextFunctio
     const { id } = req.params;
     const user = await User.findById(id);
     if (!user) throw new AppError('User not found', 404);
-    if (user.role === 'ADMIN') throw new AppError('Primary Admin accounts cannot be deleted.', 403);
+    if (user.role === 'ADMIN') throw new AppError('Admin accounts must be managed through Administrator management.', 403);
 
     await User.findByIdAndDelete(id);
     await createAuditLog(req.user._id, 'DELETE_MODERATOR', 'User', id);

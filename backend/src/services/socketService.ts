@@ -71,3 +71,8 @@ export const emitDeviceStatus = (deviceId: string, status: string, classroomId?:
   if (!io) return;
   io.to('admin_room').emit('device.status', { deviceId, status, classroomId, timestamp: new Date() });
 };
+
+export const emitTimetableUpdate = (payload: any) => {
+  if (!io) return;
+  io.emit('TIMETABLE_UPDATED', { ...payload, timestamp: new Date() });
+};

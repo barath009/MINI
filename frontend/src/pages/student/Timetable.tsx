@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../services/api';
+import { useSocket } from '../../context/SocketContext';
 import { Calendar, Clock, MapPin, User, BookOpen, AlertCircle, Sparkles } from 'lucide-react';
 
 const WEEKDAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 
 export const StudentTimetable: React.FC = () => {
+  const { socket } = useSocket();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDay, setSelectedDay] = useState<string>('MONDAY');
 
-  useEffect(() => {
+  const fetchTimetable = () => {
     api
       .get('/student/timetable')
       .then((res) => {
@@ -23,7 +25,22 @@ export const StudentTimetable: React.FC = () => {
       })
       .catch((err) => console.error(err))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    fetchTimetable();
   }, []);
+
+  useEffect(() => {
+    if (!socket) return;
+    const handleUpdate = () => {
+      fetchTimetable();
+    };
+    socket.on('TIMETABLE_UPDATED', handleUpdate);
+    return () => {
+      socket.off('TIMETABLE_UPDATED', handleUpdate);
+    };
+  }, [socket]);
 
   if (loading) {
     return <div className="p-8 text-center text-slate-400 text-xs animate-pulse">Loading Weekly Class Timetable...</div>;

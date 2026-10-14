@@ -23,6 +23,11 @@ import {
   descriptorToArray,
   RECOGNITION_THRESHOLD,
 } from '../../services/faceRecognition';
+import {
+  getCameraStream,
+  attachStreamToVideo,
+  getCameraErrorMessage,
+} from '../../services/cameraHelper';
 
 interface ScanResult {
   studentName: string;
@@ -64,25 +69,40 @@ export const BiometricKioskScanner: React.FC = () => {
   const [lastScanTime, setLastScanTime] = useState('');
   const [modelError, setModelError] = useState('');
 
+  const [cameraError, setCameraError] = useState('');
+
   // ── Load face-api.js models ──
-  useEffect(() => {
+  const handleLoadModels = async () => {
     setModelLoading(true);
-    loadFaceModels()
-      .then(() => { setModelsReady(true); setModelLoading(false); })
-      .catch((e) => { setModelError('Failed to load AI models. Check /public/models/.'); setModelLoading(false); console.error(e); });
+    setModelError('');
+    try {
+      await loadFaceModels();
+      setModelsReady(true);
+    } catch (e: any) {
+      setModelError(e?.message || 'Failed to load AI face recognition models.');
+      console.error('[BiometricKioskScanner] Model load error:', e);
+    } finally {
+      setModelLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    handleLoadModels();
   }, []);
 
   // ── Camera ──
   const startCamera = async () => {
+    setCameraError('');
     try {
-      const ms = await navigator.mediaDevices.getUserMedia({
-        video: { width: 1280, height: 720, facingMode: 'user' },
-      });
+      const ms = await getCameraStream({ width: 1280, height: 720 });
       setStream(ms);
-      if (videoRef.current) videoRef.current.srcObject = ms;
+      await attachStreamToVideo(videoRef.current, ms);
       setCameraActive(true);
-    } catch {
-      setModelError('Unable to access webcam. Allow camera permissions and try again.');
+    } catch (err: any) {
+      console.error('[BiometricKioskScanner] startCamera error:', err);
+      const friendlyMsg = getCameraErrorMessage(err);
+      setCameraError(friendlyMsg);
+      setCameraActive(false);
     }
   };
 
@@ -286,21 +306,55 @@ export const BiometricKioskScanner: React.FC = () => {
                 </div>
               )}
 
-              {/* Camera off */}
+              {/* Camera off / Error */}
               {!cameraActive && (
-                <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center gap-3 z-10">
-                  <Camera className="w-12 h-12 text-slate-600" />
-                  <p className="text-xs text-slate-400">Camera inactive</p>
-                  <button onClick={startCamera} className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs">Turn On Camera</button>
+                <div className="absolute inset-0 bg-slate-950/95 flex flex-col items-center justify-center gap-3 z-10 p-6 text-center">
+                  <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400">
+                    <Camera className="w-8 h-8 text-slate-400" />
+                  </div>
+                  <p className="text-sm font-bold text-slate-200">Camera is Inactive</p>
+
+                  {cameraError ? (
+                    <div className="p-3 rounded-xl bg-rose-950/80 border border-rose-800 text-rose-300 text-xs max-w-md leading-relaxed">
+                      {cameraError}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 max-w-sm">
+                      Click below to grant camera permission and activate live face scanning.
+                    </p>
+                  )}
+
+                  <button
+                    onClick={startCamera}
+                    className="mt-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg shadow-cyan-950/40 flex items-center gap-2"
+                  >
+                    <Camera className="w-4 h-4" /> Turn On Camera
+                  </button>
                 </div>
               )}
 
               {/* Model loading */}
-              {modelLoading && cameraActive && (
-                <div className="absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center gap-3 z-10">
-                  <Brain className="w-10 h-10 text-violet-400 animate-pulse" />
-                  <p className="text-xs text-slate-300 font-semibold">Loading face AI models...</p>
-                  <p className="text-[10px] text-slate-500">This only happens once</p>
+              {modelLoading && (
+                <div className="absolute inset-0 bg-slate-950/85 flex flex-col items-center justify-center gap-3 z-10 p-6 text-center">
+                  <Brain className="w-10 h-10 text-cyan-400 animate-pulse" />
+                  <p className="text-xs text-slate-200 font-bold">Loading Face AI Models...</p>
+                  <p className="text-[11px] text-slate-400">Loading 128D neural network weights</p>
+                </div>
+              )}
+
+              {/* Model Loading Error */}
+              {modelError && !modelsReady && !modelLoading && (
+                <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center gap-3 z-10 p-6 text-center">
+                  <div className="p-3 rounded-xl bg-rose-950/90 border border-rose-800 text-rose-300 text-xs max-w-md">
+                    <p className="font-bold mb-1">Face Recognition Model Notice:</p>
+                    <p>{modelError}</p>
+                  </div>
+                  <button
+                    onClick={handleLoadModels}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Retry Loading Models
+                  </button>
                 </div>
               )}
             </div>

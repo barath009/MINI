@@ -11,6 +11,7 @@ import { IoTDevice } from '../models/IoTDevice';
 import { Classroom } from '../models/Classroom';
 import { Subject } from '../models/Subject';
 import { Section } from '../models/Section';
+import { Timetable } from '../models/Timetable';
 import { manualOverrideSchema, reviewDisputeSchema } from '../validators';
 import { createAuditLog } from '../services/auditService';
 import { createNotification } from '../services/notificationService';
@@ -437,3 +438,58 @@ export const reviewDispute = async (req: any, res: Response, next: NextFunction)
     next(error);
   }
 };
+
+export const getFacultyTimetable = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const faculty = await Faculty.findOne({ userId: req.user._id });
+    if (!faculty) throw new AppError('Faculty profile not found.', 404);
+
+    const timetableRecords = await Timetable.find({
+      facultyId: faculty._id,
+      status: 'ACTIVE',
+    })
+      .sort({ periodNumber: 1 })
+      .populate('subjectId')
+      .populate('sectionId')
+      .populate('classroomId')
+      .lean();
+
+    const daysOfWeek = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
+    const currentDay = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'][new Date().getDay()];
+
+    const grouped: Record<string, any[]> = {};
+    daysOfWeek.forEach((day) => {
+      grouped[day] = [];
+    });
+
+    timetableRecords.forEach((t: any) => {
+      if (grouped[t.dayOfWeek]) {
+        grouped[t.dayOfWeek].push({
+          id: t._id,
+          periodNumber: t.periodNumber,
+          startTime: t.startTime,
+          endTime: t.endTime,
+          subjectName: t.subjectId?.name || 'Class Subject',
+          subjectCode: t.subjectId?.code || 'SUB',
+          year: t.subjectId?.year || Math.ceil((t.subjectId?.semester || t.semester || 1) / 2),
+          semester: t.subjectId?.semester || t.semester || 1,
+          sectionName: t.sectionId?.name || 'Assigned Section',
+          classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Hall',
+          classType: 'Theory',
+        });
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        currentDay,
+        weeklySchedule: grouped,
+        hasPublishedTimetable: timetableRecords.length > 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

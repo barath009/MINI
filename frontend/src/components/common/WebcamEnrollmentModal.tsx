@@ -13,6 +13,7 @@ import { Modal } from './Modal';
 import { Camera, CheckCircle, RefreshCw, AlertCircle, Brain } from 'lucide-react';
 import { api } from '../../services/api';
 import { loadFaceModels, detectAndDescribe, descriptorToArray } from '../../services/faceRecognition';
+import { getCameraStream, attachStreamToVideo, getCameraErrorMessage } from '../../services/cameraHelper';
 
 interface WebcamEnrollmentModalProps {
   isOpen: boolean;
@@ -57,18 +58,28 @@ export const WebcamEnrollmentModal: React.FC<WebcamEnrollmentModalProps> = ({
   // Start camera when modal opens
   useEffect(() => {
     if (!isOpen) return;
-    navigator.mediaDevices
-      ?.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } })
-      .then((s) => {
+
+    let active = true;
+
+    getCameraStream({ width: 640, height: 480 })
+      .then(async (s) => {
+        if (!active) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
         streamRef.current = s;
-        if (videoRef.current) { videoRef.current.srcObject = s; }
+        await attachStreamToVideo(videoRef.current, s);
         setCameraActive(true);
       })
-      .catch(() => {
-        setErrorMsg('Webcam not accessible. Please allow camera permissions.');
+      .catch((err) => {
+        if (!active) return;
+        console.error('[WebcamEnrollmentModal] Camera start error:', err);
+        setErrorMsg(getCameraErrorMessage(err));
+        setCameraActive(false);
       });
 
     return () => {
+      active = false;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       setCameraActive(false);
     };

@@ -4,7 +4,7 @@ import { Badge } from '../../components/common/Badge';
 import { Modal } from '../../components/common/Modal';
 import { WebcamEnrollmentModal } from '../../components/common/WebcamEnrollmentModal';
 import { api } from '../../services/api';
-import { Search, Scan, UserPlus, Filter, Edit3, CheckCircle, Trash2, Key, Building, Users, FileSpreadsheet } from 'lucide-react';
+import { Search, Scan, UserPlus, Filter, Edit3, CheckCircle, Trash2, Key, Building, Users, FileSpreadsheet, BookOpen, Award } from 'lucide-react';
 
 export const AdminStudents: React.FC = () => {
   const navigate = useNavigate();
@@ -19,6 +19,12 @@ export const AdminStudents: React.FC = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingStudent, setEditingStudent] = useState<any | null>(null);
   const [selectedStudentForEnroll, setSelectedStudentForEnroll] = useState<any>(null);
+
+  // Department Subjects Inspection Modal State
+  const [viewingSubjectsStudent, setViewingSubjectsStudent] = useState<any | null>(null);
+  const [studentSubjects, setStudentSubjects] = useState<any[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [subjectsFilterSem, setSubjectsFilterSem] = useState<'CURRENT' | 'ALL'>('CURRENT');
 
   // Add Form State
   const [addFormData, setAddFormData] = useState({
@@ -151,6 +157,23 @@ export const AdminStudents: React.FC = () => {
       fetchMetadata();
     } catch (err) {
       console.error('Failed to delete student', err);
+    }
+  };
+
+  const handleViewStudentSubjects = async (s: any) => {
+    setViewingSubjectsStudent(s);
+    setLoadingSubjects(true);
+    setSubjectsFilterSem('CURRENT');
+    try {
+      const deptId = s.departmentId?._id || s.departmentId;
+      const res = await api.get(`/admin/subjects?departmentId=${deptId}`);
+      if (res.data.success) {
+        setStudentSubjects(res.data.data);
+      }
+    } catch (err) {
+      console.error('Failed to load student subjects:', err);
+    } finally {
+      setLoadingSubjects(false);
     }
   };
 
@@ -337,6 +360,15 @@ export const AdminStudents: React.FC = () => {
                     </td>
                     <td className="py-3 px-4 text-right space-x-1.5">
                       <button
+                        onClick={() => handleViewStudentSubjects(s)}
+                        className="px-2 py-1.5 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-800/80 text-indigo-300 font-semibold text-[11px] inline-flex items-center gap-1 transition-colors"
+                        title={`View subjects for ${s.departmentId?.code || 'Department'} (Sem ${s.semester})`}
+                      >
+                        <BookOpen className="w-3.5 h-3.5 text-indigo-400" />
+                        Subjects
+                      </button>
+
+                      <button
                         onClick={() => {
                           setSelectedUserForCreds(s);
                           setCredsFormData({ email: s.userId?.email || '', password: '' });
@@ -515,6 +547,65 @@ export const AdminStudents: React.FC = () => {
             </select>
           </div>
 
+          {/* Year of Study, Semester, and Academic Year */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+            <div>
+              <label className="block text-slate-300 font-bold mb-1">Year of Study *</label>
+              <select
+                required
+                value={addFormData.year}
+                onChange={(e) => {
+                  const y = Number(e.target.value);
+                  const defaultSem = y * 2 - 1;
+                  setAddFormData({ ...addFormData, year: y, semester: defaultSem });
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-bold"
+              >
+                <option value={1}>1st Year (Freshman)</option>
+                <option value={2}>2nd Year (Sophomore)</option>
+                <option value={3}>3rd Year (Junior)</option>
+                <option value={4}>4th Year (Senior)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-bold mb-1">Semester of Study *</label>
+              <select
+                required
+                value={addFormData.semester}
+                onChange={(e) => {
+                  const sem = Number(e.target.value);
+                  const derivedYear = Math.ceil(sem / 2);
+                  setAddFormData({ ...addFormData, semester: sem, year: derivedYear });
+                }}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-cyan-400 font-bold font-mono"
+              >
+                <option value={1}>Semester 1 (Year 1)</option>
+                <option value={2}>Semester 2 (Year 1)</option>
+                <option value={3}>Semester 3 (Year 2)</option>
+                <option value={4}>Semester 4 (Year 2)</option>
+                <option value={5}>Semester 5 (Year 3)</option>
+                <option value={6}>Semester 6 (Year 3)</option>
+                <option value={7}>Semester 7 (Year 4)</option>
+                <option value={8}>Semester 8 (Year 4)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-300 font-bold mb-1">Academic Year *</label>
+              <select
+                value={addFormData.academicYear}
+                onChange={(e) => setAddFormData({ ...addFormData, academicYear: e.target.value })}
+                className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-medium"
+              >
+                <option value="2026-2027">2026-2027</option>
+                <option value="2025-2026">2025-2026</option>
+                <option value="2024-2025">2024-2025</option>
+                <option value="2027-2028">2027-2028</option>
+              </select>
+            </div>
+          </div>
+
           <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
             <button
               type="button"
@@ -605,6 +696,51 @@ export const AdminStudents: React.FC = () => {
               </div>
             </div>
 
+            {/* Year and Semester Selection in Edit Modal */}
+            <div className="grid grid-cols-2 gap-2 p-3 rounded-xl bg-slate-900/90 border border-slate-800">
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Year of Study *</label>
+                <select
+                  required
+                  value={editFormData.year}
+                  onChange={(e) => {
+                    const y = Number(e.target.value);
+                    const defaultSem = y * 2 - 1;
+                    setEditFormData({ ...editFormData, year: y, semester: defaultSem });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-bold"
+                >
+                  <option value={1}>1st Year (Freshman)</option>
+                  <option value={2}>2nd Year (Sophomore)</option>
+                  <option value={3}>3rd Year (Junior)</option>
+                  <option value={4}>4th Year (Senior)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-bold mb-1">Semester of Study *</label>
+                <select
+                  required
+                  value={editFormData.semester}
+                  onChange={(e) => {
+                    const sem = Number(e.target.value);
+                    const derivedYear = Math.ceil(sem / 2);
+                    setEditFormData({ ...editFormData, semester: sem, year: derivedYear });
+                  }}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-cyan-400 font-bold font-mono"
+                >
+                  <option value={1}>Semester 1 (Year 1)</option>
+                  <option value={2}>Semester 2 (Year 1)</option>
+                  <option value={3}>Semester 3 (Year 2)</option>
+                  <option value={4}>Semester 4 (Year 2)</option>
+                  <option value={5}>Semester 5 (Year 3)</option>
+                  <option value={6}>Semester 6 (Year 3)</option>
+                  <option value={7}>Semester 7 (Year 4)</option>
+                  <option value={8}>Semester 8 (Year 4)</option>
+                </select>
+              </div>
+            </div>
+
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
               <button
                 type="button"
@@ -682,6 +818,129 @@ export const AdminStudents: React.FC = () => {
             fetchStudents();
           }}
         />
+      )}
+
+      {/* Student Department Subjects Inspection Modal */}
+      {viewingSubjectsStudent && (
+        <Modal
+          isOpen={!!viewingSubjectsStudent}
+          onClose={() => setViewingSubjectsStudent(null)}
+          title={`Department Curriculum & Subjects: ${viewingSubjectsStudent.userId?.name}`}
+        >
+          <div className="space-y-4 text-xs">
+            {/* Student & Department Info Banner */}
+            <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-extrabold text-cyan-400 font-mono text-xs">
+                  {viewingSubjectsStudent.registerNumber}
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800">
+                  {viewingSubjectsStudent.departmentId?.code}
+                </span>
+              </div>
+              <p className="text-slate-200 font-bold text-sm">
+                {viewingSubjectsStudent.userId?.name}
+              </p>
+              <p className="text-slate-400 text-[11px]">
+                Department of {viewingSubjectsStudent.departmentId?.name} · Year {viewingSubjectsStudent.year} (Semester {viewingSubjectsStudent.semester} - Section {viewingSubjectsStudent.sectionId?.name})
+              </p>
+            </div>
+
+            {/* Semester Filter Tabs */}
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              <button
+                onClick={() => setSubjectsFilterSem('CURRENT')}
+                className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-colors ${
+                  subjectsFilterSem === 'CURRENT'
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Current Semester (Sem {viewingSubjectsStudent.semester})
+              </button>
+              <button
+                onClick={() => setSubjectsFilterSem('ALL')}
+                className={`px-3 py-1.5 rounded-lg font-bold text-xs transition-colors ${
+                  subjectsFilterSem === 'ALL'
+                    ? 'bg-cyan-600 text-white'
+                    : 'bg-slate-900 text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                All Department Semesters ({studentSubjects.length})
+              </button>
+            </div>
+
+            {/* Subjects Table */}
+            {loadingSubjects ? (
+              <div className="p-8 text-center text-slate-400">Loading department subjects...</div>
+            ) : studentSubjects.length === 0 ? (
+              <div className="p-8 text-center text-slate-500">
+                No subjects registered for department '{viewingSubjectsStudent.departmentId?.code}'.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-xl border border-slate-800 max-h-80">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-900/90 text-slate-400 font-semibold uppercase tracking-wider text-[10px] border-b border-slate-800 sticky top-0">
+                    <tr>
+                      <th className="p-2.5">Code</th>
+                      <th className="p-2.5">Subject Name</th>
+                      <th className="p-2.5">Semester</th>
+                      <th className="p-2.5">Credits</th>
+                      <th className="p-2.5">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 text-slate-300">
+                    {studentSubjects
+                      .filter((sub) =>
+                        subjectsFilterSem === 'CURRENT' ? sub.semester === viewingSubjectsStudent.semester : true
+                      )
+                      .map((sub) => (
+                        <tr
+                          key={sub._id}
+                          className={`hover:bg-slate-800/40 transition-colors ${
+                            sub.semester === viewingSubjectsStudent.semester ? 'bg-cyan-950/20' : ''
+                          }`}
+                        >
+                          <td className="p-2.5 font-mono font-bold text-cyan-400">
+                            {sub.code}
+                          </td>
+                          <td className="p-2.5 font-semibold text-slate-100">
+                            {sub.name}
+                            {sub.semester === viewingSubjectsStudent.semester && (
+                              <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">
+                                Current
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2.5 font-mono font-bold text-slate-300">
+                            Sem {sub.semester}
+                          </td>
+                          <td className="p-2.5 font-mono text-purple-300 font-semibold">
+                            {sub.credits || 3} Cr
+                          </td>
+                          <td className="p-2.5">
+                            <span className="text-[10px] font-bold text-emerald-400">
+                              {sub.status || 'ACTIVE'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setViewingSubjectsStudent(null)}
+                className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-medium"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -8,6 +8,7 @@ import { ClassAllocation } from '../models/ClassAllocation';
 import { Timetable } from '../models/Timetable';
 import { Notification } from '../models/Notification';
 import { AttendanceDispute } from '../models/AttendanceDispute';
+import { Subject } from '../models/Subject';
 import { reportAttendanceIssueSchema, updateStudentProfileSchema } from '../validators';
 import { createAuditLog } from '../services/auditService';
 
@@ -71,7 +72,6 @@ export const getStudentDashboard = async (req: any, res: Response, next: NextFun
 
     const todayScheduleRaw = await Timetable.find({
       sectionId: student.sectionId?._id || student.sectionId,
-      semester: student.semester,
       dayOfWeek: currentDayName,
       status: 'ACTIVE',
     })
@@ -113,37 +113,76 @@ export const getStudentDashboard = async (req: any, res: Response, next: NextFun
       return item;
     });
 
-    // 4. Subject Breakdown
-    const allocations = await ClassAllocation.find({ studentId, status: 'ACTIVE' })
+    // 4. Subject Breakdown (Department & Semester curriculum + Class Allocations)
+    const departmentId = student.departmentId?._id || student.departmentId;
+    const deptSubjects = await Subject.find({
+      departmentId,
+      semester: student.semester,
+      status: 'ACTIVE',
+    }).lean();
+
+    const allocations = await ClassAllocation.find({
+      $or: [{ studentId }, { sectionId: student.sectionId?._id || student.sectionId }],
+      status: 'ACTIVE',
+    })
       .populate('subjectId')
       .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
       .lean();
 
-    const subjectBreakdown = (
-      await Promise.all(
-        allocations.map(async (alloc: any) => {
-          if (!alloc.subjectId) return null;
-          const subId = alloc.subjectId._id;
-          const sTotal = await AttendanceRecord.countDocuments({ studentId, subjectId: subId });
-          const sAttended = await AttendanceRecord.countDocuments({
-            studentId,
-            subjectId: subId,
-            status: { $in: ['PRESENT', 'LATE'] },
-          });
-          const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : 100.0;
-          return {
-            subjectId: subId,
-            subjectCode: alloc.subjectId.code,
-            subjectName: alloc.subjectId.name,
-            facultyName: alloc.facultyId?.userId?.name || 'Faculty Member',
-            totalClasses: sTotal,
-            attendedClasses: sAttended,
-            percentage: pct,
-            status: pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
-          };
-        })
-      )
-    ).filter(Boolean);
+    const timetableEntries = await Timetable.find({
+      sectionId: student.sectionId?._id || student.sectionId,
+      status: 'ACTIVE',
+    })
+      .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+      .lean();
+
+    const facultyMap = new Map<string, string>();
+    allocations.forEach((a: any) => {
+      if (a.subjectId?._id && a.facultyId?.userId?.name) {
+        facultyMap.set(a.subjectId._id.toString(), a.facultyId.userId.name);
+      }
+    });
+    timetableEntries.forEach((t: any) => {
+      if (t.subjectId && t.facultyId?.userId?.name && !facultyMap.has(t.subjectId.toString())) {
+        facultyMap.set(t.subjectId.toString(), t.facultyId.userId.name);
+      }
+    });
+
+    // Merge department curriculum subjects with any allocated subjects
+    const allSubjectMap = new Map<string, any>();
+    deptSubjects.forEach((sub: any) => {
+      allSubjectMap.set(sub._id.toString(), sub);
+    });
+    allocations.forEach((a: any) => {
+      if (a.subjectId && !allSubjectMap.has(a.subjectId._id.toString())) {
+        allSubjectMap.set(a.subjectId._id.toString(), a.subjectId);
+      }
+    });
+
+    const subjectBreakdown = await Promise.all(
+      Array.from(allSubjectMap.values()).map(async (sub: any) => {
+        const subId = sub._id;
+        const sTotal = await AttendanceRecord.countDocuments({ studentId, subjectId: subId });
+        const sAttended = await AttendanceRecord.countDocuments({
+          studentId,
+          subjectId: subId,
+          status: { $in: ['PRESENT', 'LATE'] },
+        });
+        const pct = sTotal > 0 ? parseFloat(((sAttended / sTotal) * 100).toFixed(1)) : 100.0;
+        return {
+          subjectId: subId,
+          subjectCode: sub.code,
+          subjectName: sub.name,
+          credits: sub.credits || 3,
+          semester: sub.semester,
+          facultyName: facultyMap.get(subId.toString()) || 'Faculty Member',
+          totalClasses: sTotal,
+          attendedClasses: sAttended,
+          percentage: pct,
+          status: pct >= 75 ? 'SAFE' : pct >= 65 ? 'WARNING' : 'CRITICAL',
+        };
+      })
+    );
 
     // 5. Recent Attendance Activity
     const recentRecordsRaw = await AttendanceRecord.find({ studentId })
@@ -305,8 +344,7 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
     if (!student) throw new AppError('Student profile not found.', 404);
 
     const timetableRecords = await Timetable.find({
-      sectionId: student.sectionId,
-      semester: student.semester,
+      sectionId: student.sectionId?._id || student.sectionId,
       status: 'ACTIVE',
     })
       .sort({ periodNumber: 1 })
@@ -695,5 +733,108 @@ export const updateStudentProfile = async (req: any, res: Response, next: NextFu
     });
   } catch (error) {
     next(error);
+  }
+};
+
+/**
+ * Get all subjects according to the student's department and semester
+ * Includes attendance statistics, credits, and assigned faculty for each subject.
+ */
+export const getStudentSubjects = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const student = await Student.findOne({ userId: req.user._id })
+      .populate('departmentId')
+      .populate('sectionId')
+      .lean();
+
+    if (!student) throw new AppError('Student profile not found.', 404);
+
+    const studentId = student._id;
+    const departmentId = student.departmentId?._id || student.departmentId;
+    const currentSemester = student.semester;
+
+    // Fetch all active subjects for this student's department
+    const deptSubjects = await Subject.find({ departmentId, status: 'ACTIVE' })
+      .populate('departmentId')
+      .sort({ semester: 1, code: 1 })
+      .lean();
+
+    // Map section timetable to find assigned faculties
+    const timetables = await Timetable.find({
+      sectionId: student.sectionId?._id || student.sectionId,
+      status: 'ACTIVE',
+    })
+      .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name email' } })
+      .lean();
+
+    const facultyMap = new Map<string, string>();
+    timetables.forEach((t: any) => {
+      if (t.subjectId && t.facultyId?.userId?.name) {
+        facultyMap.set(t.subjectId.toString(), t.facultyId.userId.name);
+      }
+    });
+
+    // Check allocations as well
+    const allocations = await ClassAllocation.find({
+      $or: [{ studentId }, { sectionId: student.sectionId?._id || student.sectionId }],
+      status: 'ACTIVE',
+    })
+      .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+      .lean();
+
+    allocations.forEach((a: any) => {
+      if (a.subjectId && a.facultyId?.userId?.name) {
+        facultyMap.set(a.subjectId.toString(), a.facultyId.userId.name);
+      }
+    });
+
+    // Compute attendance statistics for each subject
+    const enrichedSubjects = await Promise.all(
+      deptSubjects.map(async (sub: any) => {
+        const subId = sub._id;
+        const totalClasses = await AttendanceRecord.countDocuments({ studentId, subjectId: subId });
+        const attendedClasses = await AttendanceRecord.countDocuments({
+          studentId,
+          subjectId: subId,
+          status: { $in: ['PRESENT', 'LATE'] },
+        });
+        const percentage = totalClasses > 0 ? parseFloat(((attendedClasses / totalClasses) * 100).toFixed(1)) : 100.0;
+
+        return {
+          id: sub._id,
+          code: sub.code,
+          name: sub.name,
+          semester: sub.semester,
+          credits: sub.credits || 3,
+          isCurrentSemester: sub.semester === currentSemester,
+          departmentCode: (sub.departmentId as any)?.code || (student.departmentId as any)?.code || 'DEPT',
+          departmentName: (sub.departmentId as any)?.name || (student.departmentId as any)?.name || '',
+          facultyName: facultyMap.get(subId.toString()) || 'Faculty Member',
+          totalClasses,
+          attendedClasses,
+          percentage,
+          status: percentage >= 75 ? 'SAFE' : percentage >= 65 ? 'WARNING' : 'CRITICAL',
+        };
+      })
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        department: {
+          id: departmentId,
+          name: (student.departmentId as any)?.name || 'Department',
+          code: (student.departmentId as any)?.code || 'DEPT',
+        },
+        currentSemester,
+        year: student.year,
+        section: (student.sectionId as any)?.name || 'A',
+        totalDepartmentSubjects: enrichedSubjects.length,
+        currentSemesterSubjects: enrichedSubjects.filter((s) => s.isCurrentSemester),
+        allSubjects: enrichedSubjects,
+      },
+    });
+  } catch (err) {
+    next(err);
   }
 };

@@ -19,17 +19,21 @@ import {
   createDepartment,
   updateDepartment,
   deleteDepartment,
+  deleteAllDepartments,
   getSections,
   createSection,
+  updateSection,
   deleteSection,
   getSubjects,
   createSubject,
   updateSubject,
   deleteSubject,
+  deleteAllSubjects,
   getClassrooms,
   createClassroom,
   updateClassroom,
   deleteClassroom,
+  deleteAllClassrooms,
   getDevices,
   createDevice,
   updateDevice,
@@ -37,6 +41,7 @@ import {
   getSessions,
   createSession,
   deleteSession,
+  deleteAllSessions,
   startSession,
   endSession,
   enrollBiometrics,
@@ -45,7 +50,9 @@ import {
   updateSetting,
   getModerators,
   createModerator,
+  getAdmins,
   createAdminUser,
+  deleteAdminUser,
   deleteModerator,
   updateUserStatus,
 } from '../controllers/adminController';
@@ -59,6 +66,12 @@ import {
   removeWard,
   resetParentPassword,
 } from '../controllers/adminParentController';
+import {
+  getAdminTimetable,
+  assignTimetablePeriod,
+  updateTimetablePeriod,
+  deleteTimetablePeriod,
+} from '../controllers/adminTimetableController';
 import { authenticate } from '../middleware/auth';
 import { authorize } from '../middleware/rbac';
 
@@ -94,22 +107,35 @@ router.delete('/allocations/:id', deleteAllocation);
 router.get('/departments', getDepartments);
 router.post('/departments', createDepartment);
 router.put('/departments/:id', updateDepartment);
+router.delete('/departments/all', deleteAllDepartments);
+router.delete('/departments', deleteAllDepartments);
 router.delete('/departments/:id', deleteDepartment);
 router.get('/sections', getSections);
 router.post('/sections', createSection);
+router.put('/sections/:id', updateSection);
 router.delete('/sections/:id', deleteSection);
 
 // Subjects
 router.get('/subjects', getSubjects);
 router.post('/subjects', createSubject);
 router.put('/subjects/:id', updateSubject);
+router.delete('/subjects/all', deleteAllSubjects);
+router.delete('/subjects', deleteAllSubjects);
 router.delete('/subjects/:id', deleteSubject);
 
 // Classrooms
 router.get('/classrooms', getClassrooms);
 router.post('/classrooms', createClassroom);
 router.put('/classrooms/:id', updateClassroom);
+router.delete('/classrooms/all', deleteAllClassrooms);
+router.delete('/classrooms', deleteAllClassrooms);
 router.delete('/classrooms/:id', deleteClassroom);
+
+// Timetable Schedule Management
+router.get('/timetable', getAdminTimetable);
+router.post('/timetable', assignTimetablePeriod);
+router.put('/timetable/:id', updateTimetablePeriod);
+router.delete('/timetable/:id', deleteTimetablePeriod);
 
 // Devices
 router.get('/devices', getDevices);
@@ -125,6 +151,8 @@ router.put('/users/:userId/status', updateUserStatus);
 // Sessions
 router.get('/sessions', getSessions);
 router.post('/sessions', createSession);
+router.delete('/sessions/all', deleteAllSessions);
+router.delete('/sessions', deleteAllSessions);
 router.delete('/sessions/:id', deleteSession);
 router.post('/sessions/:id/start', startSession);
 router.post('/sessions/:id/end', endSession);
@@ -135,10 +163,14 @@ router.get('/audit', getAuditLogs);
 router.get('/settings', getSettings);
 router.put('/settings', updateSetting);
 
+// Administrator Management (Admin Only)
+router.get('/admins', authorize('ADMIN'), getAdmins);
+router.post('/admins', authorize('ADMIN'), createAdminUser);
+router.delete('/admins/:id', authorize('ADMIN'), deleteAdminUser);
+
 // Moderator Management (Admin Only)
 router.get('/moderators', authorize('ADMIN'), getModerators);
 router.post('/moderators', authorize('ADMIN'), createModerator);
-router.post('/admins', authorize('ADMIN'), createAdminUser);
 router.delete('/moderators/:id', authorize('ADMIN'), deleteModerator);
 
 // Parent Management (Admin & Moderator)

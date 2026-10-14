@@ -125,3 +125,56 @@ export const changePassword = async (req: any, res: Response, next: NextFunction
     next(error);
   }
 };
+
+export const updateProfile = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { name, email, currentPassword, newPassword } = req.body;
+    const user = await User.findById(req.user._id);
+    if (!user) throw new AppError('User account not found', 404);
+
+    if (newPassword && newPassword.trim() !== '') {
+      if (currentPassword) {
+        const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isMatch) {
+          throw new AppError('Current password is incorrect.', 400, 'AUTH_INVALID');
+        }
+      }
+      user.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
+    if (email && email.toLowerCase() !== user.email) {
+      const existing = await User.findOne({ email: email.toLowerCase(), _id: { $ne: user._id } });
+      if (existing) {
+        throw new AppError('Email/Username is already in use by another account', 409);
+      }
+      user.email = email.toLowerCase();
+    }
+
+    if (name && name.trim() !== '') {
+      user.name = name.trim();
+    }
+
+    await user.save();
+
+    await createAuditLog(user._id, 'UPDATE_PROFILE', 'User', user._id.toString(), {
+      name: user.name,
+      email: user.email,
+      passwordChanged: !!newPassword,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile credentials updated successfully.',
+      data: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        status: user.status,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+

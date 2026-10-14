@@ -187,6 +187,48 @@ export const getAllocationTemplate = async (req: Request, res: Response, next: N
   } catch (err) { next(err); }
 };
 
+export const getSubjectTemplate = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const wb = XLSX.utils.book_new();
+
+    const headers = ['subject_code', 'subject_name', 'department_code', 'year', 'semester', 'credits'];
+    const samples = [
+      ['MZ3501', 'Sensors and Signal Conditioning', 'MZ', '3', '5', '4'],
+      ['MZ3502', 'Microcontrollers and Embedded Systems', 'MZ', '3', '5', '4'],
+      ['CS501', 'Database Management Systems', 'CSE', '3', '5', '4'],
+      ['IT302', 'Web Technologies', 'IT', '2', '3', '3'],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...samples]);
+    ws['!cols'] = headers.map(() => ({ wch: 26 }));
+
+    const instructions = [
+      ['FIELD', 'REQUIRED', 'DESCRIPTION', 'EXAMPLE'],
+      ['subject_code', 'YES', 'Unique curriculum course code', 'MZ3501'],
+      ['subject_name', 'YES', 'Full descriptive name of the subject', 'Sensors and Signal Conditioning'],
+      ['department_code', 'YES', 'Engineering Department code (e.g. MZ, CSE, IT, ECE)', 'MZ'],
+      ['year', 'NO', 'Year of study (1 to 4). Defaults based on semester if omitted', '3'],
+      ['semester', 'YES', 'Curriculum semester number (1 to 8)', '5'],
+      ['credits', 'NO', 'Course credit weight (defaults to 3 if omitted)', '4'],
+      ['', '', '', ''],
+      ['NOTES', '', '', ''],
+      ['- subject_code must be unique across the institution curriculum', '', '', ''],
+      ['- department_code must correspond to an active engineering department or alias', '', '', ''],
+      ['- year corresponds to Year of Study (1 to 4)', '', '', ''],
+      ['- If importing for a single department, you can select the target department in the upload screen', '', '', ''],
+    ];
+    const wsInstr = XLSX.utils.aoa_to_sheet(instructions);
+    wsInstr['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 55 }, { wch: 30 }];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Subjects');
+    XLSX.utils.book_append_sheet(wb, wsInstr, 'Instructions');
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="subjects_template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { next(err); }
+};
+
 // ─── Student Import ────────────────────────────────────────────────────────────
 
 export const previewStudentImport = async (req: any, res: Response, next: NextFunction) => {
@@ -1016,6 +1058,302 @@ export const confirmAllocationImport = async (req: any, res: Response, next: Nex
   } catch (err) { next(err); }
 };
 
+// ─── Subject Import ────────────────────────────────────────────────────────────
+
+export const previewSubjectImport = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    if (!req.file) throw new AppError('No file uploaded.', 400, 'NO_FILE');
+
+    const wb = parseWorkbook(req.file.buffer);
+    const rawRows = sheetToRows(wb);
+
+    if (rawRows.length === 0) throw new AppError('Uploaded file is empty.', 400, 'EMPTY_FILE');
+    if (rawRows.length > MAX_ROWS) throw new AppError(`File exceeds maximum of ${MAX_ROWS} rows.`, 400, 'TOO_MANY_ROWS');
+
+    const defaultDeptId = req.body.defaultDepartmentId;
+    const REQUIRED = ['subject_code', 'subject_name'];
+    const missingCols = checkRequiredColumns(rawRows[0], REQUIRED);
+    if (missingCols.length > 0) {
+      throw new AppError(`Missing required columns: ${missingCols.join(', ')}`, 400, 'MISSING_COLUMNS');
+    }
+
+    const [departments, existingSubjects] = await Promise.all([
+      Department.find({ status: 'ACTIVE' }),
+      Subject.find({}, { code: 1, name: 1, departmentId: 1 }),
+    ]);
+
+    const deptMap = new Map<string, any>();
+    departments.forEach(d => {
+      deptMap.set(d.code.toUpperCase(), d._id);
+      deptMap.set(d.name.toUpperCase(), d._id);
+    });
+    const deptAliases: Record<string, string> = {
+      'MZ': 'MECH',
+      'ME': 'MECH',
+      'CS': 'CSE',
+      'EC': 'ECE',
+      'EE': 'EEE',
+      'AI': 'AIDS',
+      'AI&DS': 'AIDS',
+    };
+    Object.entries(deptAliases).forEach(([alias, targetCode]) => {
+      if (deptMap.has(targetCode)) {
+        deptMap.set(alias, deptMap.get(targetCode));
+      }
+    });
+
+    const defaultDept = defaultDeptId ? departments.find(d => d._id.toString() === defaultDeptId.toString()) : null;
+
+    const existingCodeMap = new Map<string, any>();
+    existingSubjects.forEach(s => {
+      existingCodeMap.set(s.code.toUpperCase(), s);
+    });
+
+    const fileCodes = new Set<string>();
+    const previewRows: IImportPreviewRow[] = [];
+    const rowErrors: IImportError[] = [];
+    const missingDepts = new Set<string>();
+
+    let validCount = 0;
+    let invalidCount = 0;
+    let duplicateCount = 0;
+
+    for (let i = 0; i < rawRows.length; i++) {
+      const row = rawRows[i];
+      const rowNum = i + 2;
+      const errors: string[] = [];
+
+      const code = cellStr(row.subject_code || row.code || row.Course_Code || row['Course Code']).toUpperCase();
+      const name = cellStr(row.subject_name || row.name || row.Course_Name || row['Course Name']);
+      let deptCode = cellStr(row.department_code || row.department || row.dept || row.Department).toUpperCase();
+      const semesterStr = cellStr(row.semester || row.sem || row.Semester);
+      const creditsStr = cellStr(row.credits || row.Credits);
+
+      if (!code) {
+        errors.push('subject_code is required');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'subject_code', errorCode: 'REQUIRED_FIELD', errorMessage: 'Subject code is required.' });
+      }
+
+      if (!name) {
+        errors.push('subject_name is required');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'subject_name', errorCode: 'REQUIRED_FIELD', errorMessage: 'Subject name is required.' });
+      }
+
+      let resolvedDeptId: any = null;
+      if (deptCode) {
+        resolvedDeptId = deptMap.get(deptCode);
+        if (!resolvedDeptId) {
+          missingDepts.add(deptCode);
+          errors.push(`department_code "${deptCode}" not recognized in system`);
+          rowErrors.push({ rowNumber: rowNum, fieldName: 'department_code', errorCode: 'INVALID_DEPARTMENT', errorMessage: `Department "${deptCode}" not recognized.`, rawValue: deptCode });
+        }
+      } else if (defaultDept) {
+        resolvedDeptId = defaultDept._id;
+        deptCode = defaultDept.code;
+      } else {
+        errors.push('department_code is required');
+        rowErrors.push({ rowNumber: rowNum, fieldName: 'department_code', errorCode: 'REQUIRED_FIELD', errorMessage: 'Department code is required.' });
+      }
+
+      let semester = 1;
+      if (semesterStr) {
+        semester = parseInt(semesterStr, 10);
+        if (isNaN(semester) || semester < 1 || semester > 8) {
+          errors.push('semester must be between 1 and 8');
+          rowErrors.push({ rowNumber: rowNum, fieldName: 'semester', errorCode: 'INVALID_SEMESTER', errorMessage: 'Semester must be between 1 and 8.', rawValue: semesterStr });
+        }
+      }
+
+      const yearStr = cellStr(row.year || row.Year || row.year_of_study || row['Year of Study']);
+      let year = Math.ceil(semester / 2) || 1;
+      if (yearStr) {
+        const parsedYear = parseInt(yearStr, 10);
+        if (!isNaN(parsedYear) && parsedYear >= 1 && parsedYear <= 4) {
+          year = parsedYear;
+        }
+      }
+
+      let credits = 3;
+      if (creditsStr) {
+        credits = parseInt(creditsStr, 10);
+        if (isNaN(credits) || credits < 1 || credits > 10) {
+          credits = 3;
+        }
+      }
+
+      let isDuplicate = false;
+      if (code) {
+        if (fileCodes.has(code)) {
+          isDuplicate = true;
+          errors.push(`Duplicate subject_code "${code}" within uploaded file.`);
+          rowErrors.push({ rowNumber: rowNum, fieldName: 'subject_code', errorCode: 'FILE_DUPLICATE', errorMessage: `Duplicate subject code "${code}" in file.`, rawValue: code });
+        } else if (existingCodeMap.has(code)) {
+          isDuplicate = true;
+          errors.push(`Subject code "${code}" already exists in system (will update on confirm).`);
+        }
+        fileCodes.add(code);
+      }
+
+      let status: 'VALID' | 'INVALID' | 'DUPLICATE' | 'WARNING' = 'VALID';
+      if (errors.some(e => !e.includes('already exists in system'))) {
+        status = 'INVALID';
+        invalidCount++;
+      } else if (isDuplicate) {
+        status = 'DUPLICATE';
+        duplicateCount++;
+      } else {
+        validCount++;
+      }
+
+      previewRows.push({
+        rowNumber: rowNum,
+        data: {
+          subject_code: code,
+          subject_name: name,
+          department_code: deptCode,
+          departmentId: resolvedDeptId,
+          year,
+          semester,
+          credits,
+        },
+        status,
+        errors,
+      });
+    }
+
+    const job = await ImportJob.create({
+      importType: 'SUBJECTS',
+      uploadedFilename: req.file.originalname,
+      uploadedBy: req.user._id,
+      totalRows: rawRows.length,
+      validRows: validCount,
+      invalidRows: invalidCount,
+      duplicateRows: duplicateCount,
+      importedRows: 0,
+      skippedRows: 0,
+      status: 'PREVIEW',
+      rowErrors,
+      previewData: previewRows,
+      missingEntities: {
+        departments: Array.from(missingDepts),
+        sections: [],
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        jobId: job._id,
+        summary: {
+          totalRows: rawRows.length,
+          validRows: validCount,
+          invalidRows: invalidCount,
+          duplicateRows: duplicateCount,
+        },
+        previewRows,
+        missingEntities: {
+          departments: Array.from(missingDepts),
+          sections: [],
+        },
+      },
+    });
+  } catch (err) { next(err); }
+};
+
+export const confirmSubjectImport = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { jobId } = req.params;
+    const { deptDecisions = {}, skipDuplicates = false } = req.body;
+
+    const job = await ImportJob.findById(jobId);
+    if (!job) throw new AppError('Import job not found.', 404, 'JOB_NOT_FOUND');
+    if (job.status !== 'PREVIEW') throw new AppError('Import job is not in preview state.', 400, 'INVALID_STATE');
+
+    const deptMap = new Map<string, any>();
+    const departments = await Department.find({ status: 'ACTIVE' });
+    departments.forEach(d => deptMap.set(d.code.toUpperCase(), d._id));
+
+    for (const [deptCode, dec] of Object.entries<any>(deptDecisions)) {
+      if (dec.action === 'CREATE') {
+        const newDept = await Department.create({
+          code: deptCode.toUpperCase(),
+          name: dec.name || deptCode,
+        });
+        deptMap.set(deptCode.toUpperCase(), newDept._id);
+      } else if (dec.action === 'MAP' && dec.targetCode) {
+        const targetId = deptMap.get(dec.targetCode.toUpperCase());
+        if (targetId) deptMap.set(deptCode.toUpperCase(), targetId);
+      }
+    }
+
+    let importedCount = 0;
+    let skippedCount = 0;
+
+    for (const row of job.previewData) {
+      if (row.status === 'INVALID') {
+        skippedCount++;
+        continue;
+      }
+
+      if (row.status === 'DUPLICATE' && skipDuplicates) {
+        skippedCount++;
+        continue;
+      }
+
+      const d = row.data;
+      let targetDeptId = d.departmentId;
+      if (!targetDeptId && d.department_code) {
+        targetDeptId = deptMap.get(d.department_code.toUpperCase());
+      }
+
+      if (!targetDeptId) {
+        skippedCount++;
+        continue;
+      }
+
+      await Subject.findOneAndUpdate(
+        { code: d.subject_code.toUpperCase() },
+        {
+          code: d.subject_code.toUpperCase(),
+          name: d.subject_name,
+          departmentId: targetDeptId,
+          year: d.year || Math.ceil((d.semester || 1) / 2),
+          semester: d.semester || 1,
+          credits: d.credits || 3,
+          status: 'ACTIVE',
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      importedCount++;
+    }
+
+    job.status = 'COMPLETED';
+    job.importedRows = importedCount;
+    job.skippedRows = skippedCount;
+    job.completedAt = new Date();
+    await job.save();
+
+    await createAuditLog(
+      req.user._id,
+      'IMPORT_SUBJECTS',
+      'Subject',
+      job._id.toString(),
+      { total: job.totalRows, imported: importedCount, skipped: skippedCount },
+      req.ip
+    );
+
+    res.status(200).json({
+      success: true,
+      message: `${importedCount} curriculum subjects imported successfully.`,
+      data: {
+        totalRows: job.totalRows,
+        importedRows: importedCount,
+        skippedRows: skippedCount,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
 // ─── Export ────────────────────────────────────────────────────────────────────
 
 export const exportStudents = async (req: any, res: Response, next: NextFunction) => {
@@ -1113,6 +1451,52 @@ export const exportFaculty = async (req: any, res: Response, next: NextFunction)
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', 'attachment; filename="faculty_export.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (err) { next(err); }
+};
+
+export const exportSubjects = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { department, format = 'xlsx' } = req.query;
+    const query: any = {};
+    if (department && department !== 'ALL') {
+      const deptDoc = await Department.findOne({
+        $or: [{ code: department.toUpperCase() }, { _id: department }],
+      });
+      if (deptDoc) query.departmentId = deptDoc._id;
+    }
+
+    const subjects = await Subject.find(query).populate('departmentId', 'name code').sort({ code: 1 });
+    const rows = subjects.map(s => {
+      const d = s.departmentId as any;
+      return {
+        'Subject Code': sanitizeCell(s.code),
+        'Subject Name': sanitizeCell(s.name),
+        'Department': sanitizeCell(d?.name),
+        'Department Code': sanitizeCell(d?.code),
+        'Semester': s.semester,
+        'Credits': s.credits,
+        'Status': s.status,
+      };
+    });
+
+    await createAuditLog(req.user._id, 'EXPORT_SUBJECTS', 'Subject', 'bulk', { count: rows.length }, req.ip);
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = Object.keys(rows[0] || {}).map(() => ({ wch: 25 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Subjects');
+
+    if (format === 'csv') {
+      const csv = XLSX.utils.sheet_to_csv(ws);
+      res.setHeader('Content-Disposition', 'attachment; filename="subjects_export.csv"');
+      res.setHeader('Content-Type', 'text/csv');
+      return res.send(csv);
+    }
+
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="subjects_export.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buf);
   } catch (err) { next(err); }
