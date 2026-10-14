@@ -561,10 +561,10 @@ export const AdminStudents: React.FC = () => {
                 }}
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-bold"
               >
-                <option value={1}>1st Year (Freshman)</option>
-                <option value={2}>2nd Year (Sophomore)</option>
-                <option value={3}>3rd Year (Junior)</option>
-                <option value={4}>4th Year (Senior)</option>
+                <option value={1}>Year 1</option>
+                <option value={2}>Year 2</option>
+                <option value={3}>Year 3</option>
+                <option value={4}>Year 4</option>
               </select>
             </div>
 
@@ -710,10 +710,10 @@ export const AdminStudents: React.FC = () => {
                   }}
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-100 font-bold"
                 >
-                  <option value={1}>1st Year (Freshman)</option>
-                  <option value={2}>2nd Year (Sophomore)</option>
-                  <option value={3}>3rd Year (Junior)</option>
-                  <option value={4}>4th Year (Senior)</option>
+                  <option value={1}>Year 1</option>
+                  <option value={2}>Year 2</option>
+                  <option value={3}>Year 3</option>
+                  <option value={4}>Year 4</option>
                 </select>
               </div>
 

@@ -1394,10 +1394,10 @@ export const BulkImport: React.FC = () => {
                     className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
                   >
                     <option value="">All Years</option>
-                    <option value="1">1st Year</option>
-                    <option value="2">2nd Year</option>
-                    <option value="3">3rd Year</option>
-                    <option value="4">4th Year</option>
+                    <option value="1">Year 1</option>
+                    <option value="2">Year 2</option>
+                    <option value="3">Year 3</option>
+                    <option value="4">Year 4</option>
                   </select>
                 </div>
 
