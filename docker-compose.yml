@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: bit_attendance_mongodb
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: bit-smart-attendance
+    volumes:
+      - mongodb_data:/data/db
+
+  face-service:
+    build:
+      context: ./face-service
+      dockerfile: Dockerfile
+    container_name: bit_attendance_face_service
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - FACE_RECOGNITION_MODE=mock
+      - API_KEY=face_service_secret_api_key_2026
+    depends_on:
+      - mongodb
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: bit_attendance_backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongodb:27017/bit-smart-attendance
+      - MONGODB_DB_NAME=bit-smart-attendance
+      - JWT_SECRET=super_secret_jwt_key_bit_smart_attendance_2026
+      - JWT_REFRESH_SECRET=super_secret_refresh_jwt_key_bit_2026
+      - DEVICE_API_SECRET=device_api_secret_key_bit_iot_2026
+      - FACE_SERVICE_URL=http://face-service:8000
+      - FACE_SERVICE_API_KEY=face_service_secret_api_key_2026
+      - FACE_RECOGNITION_MODE=mock
+    depends_on:
+      - mongodb
+      - face-service
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: bit_attendance_frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+  iot-simulator:
+    build:
+      context: ./iot-simulator
+      dockerfile: Dockerfile
+    container_name: bit_attendance_iot_simulator
+    restart: "no"
+    environment:
+      - BACKEND_URL=http://backend:5000
+      - DEVICE_API_SECRET=device_api_secret_key_bit_iot_2026
+    depends_on:
+      - backend
+
+volumes:
+  mongodb_data:

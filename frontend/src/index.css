@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ──────── MNC Enterprise Dark Theme Palette ──────── */
+@layer base {
+  :root {
+    --bg-app: #0b0f17;
+    --bg-surface: #151c2c;
+    --bg-subsurface: #1a2336;
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --text-muted: #64748b;
+    --border-app: #26334d;
+    --accent-blue: #2563eb;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+    background-color: #0b0f17;
+    color: #f8fafc;
+    transition: background-color 0.2s ease, color 0.2s ease;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  html.light body {
+    background-color: #f8fafc;
+    color: #0f172a;
+  }
+}
+
+/* ──────── MNC Enterprise Component Surfaces ──────── */
+.glass-card {
+  background-color: #151c2c;
+  border: 1px solid #26334d;
+  border-radius: 0.875rem;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.glass-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 8px 24px -4px rgba(37, 99, 235, 0.15);
+}
+
+html.light .glass-card {
+  background-color: #ffffff;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.05);
+}
+
+.glass-nav {
+  background-color: #0f1523;
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid #26334d;
+}
+
+html.light .glass-nav {
+  background-color: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.theme-sidebar {
+  background-color: #0f1523;
+  border-right: 1px solid #26334d;
+}
+
+html.light .theme-sidebar {
+  background-color: #ffffff;
+  border-right: 1px solid #e2e8f0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0b0f17;
+}
+
+html.light ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #26334d;
+  border-radius: 4px;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3b82f6;
+}

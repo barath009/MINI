@@ -1,0 +1,18 @@
+{
+  "name": "bit-smart-attendance-iot-simulator",
+  "version": "1.0.0",
+  "description": "IoT Hardware Simulator for BIT Smart Attendance System",
+  "main": "simulator.ts",
+  "scripts": {
+    "start": "ts-node simulator.ts"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
