@@ -17,7 +17,10 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   useEffect(() => {
     if (!token) return;
 
-    const newSocket = io(window.location.origin, {
+    const rawApiUrl = import.meta.env.VITE_API_URL ? String(import.meta.env.VITE_API_URL).trim() : '';
+    const socketEndpoint = import.meta.env.VITE_SOCKET_URL || rawApiUrl || window.location.origin;
+
+    const newSocket = io(socketEndpoint, {
       auth: { token },
       transports: ['websocket', 'polling'],
     });

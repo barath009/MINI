@@ -1,7 +1,14 @@
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 
-dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
+// Check if monorepo parent .env exists, otherwise load from local directory or container env
+const monorepoEnvPath = path.resolve(__dirname, '../../../.env');
+if (fs.existsSync(monorepoEnvPath)) {
+  dotenv.config({ path: monorepoEnvPath });
+} else {
+  dotenv.config();
+}
 
 export const config = {
   port: process.env.PORT || 5000,

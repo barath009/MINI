@@ -14,6 +14,10 @@ export const AdminSettings: React.FC = () => {
   // Modals
   const [showModModal, setShowModModal] = useState(false);
   const [modFormData, setModFormData] = useState({ name: '', email: '', password: '' });
+
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminFormData, setAdminFormData] = useState({ name: '', email: '', password: '' });
+  const [adminError, setAdminError] = useState('');
   
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<any | null>(null);
@@ -66,6 +70,24 @@ export const AdminSettings: React.FC = () => {
       }
     } catch (err: any) {
       setModError(err.response?.data?.message || 'Failed to create moderator account');
+    }
+  };
+
+  const handleCreateAdmin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminError('');
+    try {
+      const res = await api.post('/admin/admins', adminFormData);
+      if (res.data.success) {
+        setShowAdminModal(false);
+        setAdminFormData({ name: '', email: '', password: '' });
+        setSavedMsg(`Administrator account '${adminFormData.name}' created successfully!`);
+        setTimeout(() => setSavedMsg(''), 4000);
+        fetchModerators();
+        fetchUserAccounts();
+      }
+    } catch (err: any) {
+      setAdminError(err.response?.data?.message || 'Failed to create administrator account');
     }
   };
 
@@ -272,15 +294,26 @@ export const AdminSettings: React.FC = () => {
             </p>
           </div>
           {user?.role === 'ADMIN' && (
-            <button
-              onClick={() => {
-                setModError('');
-                setShowModModal(true);
-              }}
-              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md"
-            >
-              <UserPlus className="w-4 h-4" /> Add Moderator
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setAdminError('');
+                  setShowAdminModal(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-500 hover:to-pink-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-rose-900/20"
+              >
+                <UserPlus className="w-4 h-4" /> Create Admin
+              </button>
+              <button
+                onClick={() => {
+                  setModError('');
+                  setShowModModal(true);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-cyan-900/20"
+              >
+                <UserPlus className="w-4 h-4" /> Add Moderator
+              </button>
+            </div>
           )}
         </div>
 
@@ -444,6 +477,64 @@ export const AdminSettings: React.FC = () => {
             </button>
             <button type="submit" className="px-5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold">
               Create Moderator Account
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Create Admin Modal */}
+      <Modal isOpen={showAdminModal} onClose={() => setShowAdminModal(false)} title="Provision New Primary Administrator Account">
+        <form onSubmit={handleCreateAdmin} className="space-y-3 text-xs">
+          {adminError && <div className="p-2.5 rounded-xl bg-rose-950 text-rose-300 border border-rose-800">{adminError}</div>}
+          <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800/60 text-rose-200">
+            <p className="font-bold text-[11px] flex items-center gap-1.5 text-rose-300">
+              <ShieldCheck className="w-4 h-4 text-rose-400" />
+              Full System Administrative Privileges
+            </p>
+            <p className="text-[10px] text-slate-300 mt-1">
+              Admin accounts have unrestricted root access including provisioning administrators, managing moderators, and full database override controls.
+            </p>
+          </div>
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Full Admin Name *</label>
+            <input
+              type="text"
+              required
+              placeholder="e.g. Chief Executive Admin"
+              value={adminFormData.name}
+              onChange={(e) => setAdminFormData({ ...adminFormData, name: e.target.value })}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200"
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Login Email / Username *</label>
+            <input
+              type="email"
+              required
+              placeholder="admin.new@bitsathy.ac.in"
+              value={adminFormData.email}
+              onChange={(e) => setAdminFormData({ ...adminFormData, email: e.target.value })}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-slate-400 font-semibold mb-1">Account Password *</label>
+            <input
+              type="text"
+              required
+              placeholder="Enter secure admin password..."
+              value={adminFormData.password}
+              onChange={(e) => setAdminFormData({ ...adminFormData, password: e.target.value })}
+              className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 font-mono"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <button type="button" onClick={() => setShowAdminModal(false)} className="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 font-medium">
+              Cancel
+            </button>
+            <button type="submit" className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold shadow-md shadow-rose-900/20">
+              Provision Administrator Account
             </button>
           </div>
         </form>
