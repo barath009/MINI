@@ -8,10 +8,11 @@ import { AttendanceRecord } from '../models/AttendanceRecord';
 import { RecognitionEvent, RecognitionResult } from '../models/RecognitionEvent';
 import { ParentWard } from '../models/ParentWard';
 import { User } from '../models/User';
+import { Timetable } from '../models/Timetable';
 import { FaceClient, FaceRecognitionResult } from './faceClient';
 import { emitAttendanceEvent } from './socketService';
 import { createNotification } from './notificationService';
-import { clockService } from './clockService';
+import { clockService, getEffectiveKolkataTime } from './clockService';
 import { SessionService } from './sessionService';
 import { config } from '../config';
 
@@ -64,7 +65,9 @@ export class AttendanceEngine {
 
     // 3. Centralized Application Clock & Session Time Validation
     const effectiveNow = clockService.getEffectiveNow();
-    const effectiveTimeStr = `${String(effectiveNow.getHours()).padStart(2, '0')}:${String(effectiveNow.getMinutes()).padStart(2, '0')}`;
+    const effectiveKolkata = getEffectiveKolkataTime();
+    const effectiveTimeStr = effectiveKolkata.timeStr;
+    const nowMinutes = effectiveKolkata.totalMinutes;
     const effectiveDate = SessionService.normalizeDate(effectiveNow);
 
     // Reject scans during institutional lunch break (12:00 PM - 1:00 PM)
@@ -86,7 +89,7 @@ export class AttendanceEngine {
     }
 
     // Validate Active Session for this classroom on the effective date
-    const activeSession = await AttendanceSession.findOne({
+    let activeSession = await AttendanceSession.findOne({
       classroomId: device.classroomId,
       date: effectiveDate,
       status: 'ACTIVE',
@@ -96,6 +99,33 @@ export class AttendanceEngine {
       .populate('timetableId');
 
     if (!activeSession) {
+      // Check if there is a scheduled class in Timetable for this classroom right now
+      const scheduledTimetables = await Timetable.find({
+        classroomId: device.classroomId,
+        date: effectiveDate,
+        status: { $ne: 'CANCELLED' },
+      })
+        .populate('subjectId')
+        .populate('facultyId')
+        .populate('classroomId');
+
+      const matchingTimetable = scheduledTimetables.find((tt: any) => {
+        const [sh, sm] = (tt.startTime || '09:00').split(':').map(Number);
+        const [eh, em] = (tt.endTime || '10:00').split(':').map(Number);
+        return nowMinutes >= sh * 60 + sm && nowMinutes <= eh * 60 + em;
+      });
+
+      if (matchingTimetable) {
+        activeSession = await SessionService.ensureSessionForScheduledClass(matchingTimetable);
+        if (activeSession) {
+          activeSession.status = 'ACTIVE';
+          await activeSession.save();
+          await activeSession.populate(['subjectId', 'facultyId', 'timetableId']);
+        }
+      }
+    }
+
+    if (!activeSession) {
       await this.logRecognitionEvent({
         eventId,
         deviceId,
@@ -103,12 +133,35 @@ export class AttendanceEngine {
         faceCount: 0,
         livenessPassed: false,
         result: 'SESSION_INACTIVE',
-        failureReason: `No ACTIVE attendance session found in classroom for date ${effectiveDate.toISOString().slice(0, 10)}.`,
+        failureReason: `No active or scheduled class found in classroom for ${effectiveTimeStr} on ${effectiveDate.toISOString().slice(0, 10)}.`,
       });
       return {
         success: false,
-        message: 'No active class session currently running in this classroom for the scheduled date and time.',
+        message: `No scheduled class currently active in this classroom at ${effectiveTimeStr}. Attendance not updated.`,
         errorCode: 'SESSION_INACTIVE',
+      };
+    }
+
+    // Check that scan is within the scheduled session's hours
+    const [schedStartH, schedStartM] = (activeSession.startTime || '09:00').split(':').map(Number);
+    const [schedEndH, schedEndM] = (activeSession.endTime || '10:00').split(':').map(Number);
+    const sessionStartMin = schedStartH * 60 + schedStartM;
+    const sessionEndMin = schedEndH * 60 + schedEndM;
+
+    if (nowMinutes < sessionStartMin || nowMinutes > sessionEndMin) {
+      await this.logRecognitionEvent({
+        eventId,
+        deviceId,
+        faceDetected: false,
+        faceCount: 0,
+        livenessPassed: false,
+        result: 'SESSION_INACTIVE',
+        failureReason: `Scan attempted at ${effectiveTimeStr}, outside scheduled period timing (${activeSession.startTime} - ${activeSession.endTime}).`,
+      });
+      return {
+        success: false,
+        message: `Biometric scan time (${effectiveTimeStr}) does not match scheduled session timing (${activeSession.startTime} - ${activeSession.endTime}). Attendance not updated.`,
+        errorCode: 'SCHEDULE_TIME_MISMATCH',
       };
     }
 

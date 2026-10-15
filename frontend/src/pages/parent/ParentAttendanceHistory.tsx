@@ -43,6 +43,21 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
+const formatTimeRange = (start?: string, end?: string) => {
+  if (!start) return '';
+  const to12h = (t: string) => {
+    if (!t) return '';
+    const parts = t.split(':');
+    if (parts.length < 2) return t;
+    let h = parseInt(parts[0], 10);
+    const m = parts[1];
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  };
+  return `${to12h(start)} to ${to12h(end || '')}`;
+};
+
 export const ParentAttendanceHistory: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [wards, setWards] = useState<any[]>([]);
@@ -625,102 +640,79 @@ export const ParentAttendanceHistory: React.FC = () => {
                           : 'bg-slate-900/90 border-slate-800'
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        {/* Hour & Subject Info */}
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center font-mono border shrink-0 ${
-                              isPresent
-                                ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
-                                : isAbsent
-                                ? 'bg-rose-950 text-rose-300 border-rose-800'
-                                : 'bg-slate-950 text-blue-300 border-slate-800'
-                            }`}
-                          >
-                            <span className="text-[8px] uppercase font-bold">Hour</span>
-                            <span className="text-sm font-black">{r.periodNumber || 1}</span>
+                        {/* Top Line: Marked by: Faculty Name */}
+                        <div className="flex items-center justify-between text-xs text-slate-300 border-b border-slate-800/80 pb-2 mb-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-400">Marked by:</span>
+                            <span className="font-extrabold text-white">{r.markedBy || r.facultyName || 'Faculty Member'}</span>
+                          </div>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950 text-blue-300 border border-slate-800">
+                            Hour {r.periodNumber || 1}
+                          </span>
+                        </div>
+
+                        {/* Middle Line: Time • Slot • Status */}
+                        <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+                          <div className="flex items-center gap-1.5 text-xs text-slate-300 font-medium">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>{formatTimeRange(r.startTime, r.endTime) || '10:40 am to 11:30 am'}</span>
+                            <span className="text-slate-500">•</span>
+                            <span className="text-slate-400">{r.slot || 'Forenoon'}</span>
                           </div>
 
+                          {/* Status Indicator with Dot */}
                           <div>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="font-extrabold text-white text-sm">
-                                {r.subjectName}
+                            {isPresent ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950/60 text-emerald-400 border border-emerald-800/80 shadow-sm">
+                                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                                Present
                               </span>
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-blue-950 text-blue-300 border border-blue-800">
-                                {r.subjectCode}
+                            ) : isAbsent ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-950/60 text-rose-400 border border-rose-800/80 shadow-sm">
+                                <span className="w-2 h-2 rounded-full bg-rose-400"></span>
+                                Absent
                               </span>
-                            </div>
-
-                            <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
-                              <span className="flex items-center gap-1 font-mono text-slate-300 text-[11px]">
-                                <Clock className="w-3 h-3 text-slate-500" />
-                                {r.startTime || '09:00'} – {r.endTime || '10:00'} ({r.slot || 'Forenoon'})
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-3 text-[11px] text-slate-400 mt-1">
-                              <span className="flex items-center gap-1">
-                                <User className="w-3 h-3 text-slate-500" />
-                                {r.facultyName}
-                              </span>
-                              <span>•</span>
-                              <span className="flex items-center gap-1">
-                                <MapPin className="w-3 h-3 text-slate-500" />
-                                {r.classroom}
-                              </span>
-                            </div>
+                            ) : (
+                              <Badge status={r.status} />
+                            )}
                           </div>
                         </div>
 
-                        {/* Status Pill */}
-                        <div className="shrink-0">
-                          {r.status === 'PRESENT' && (
-                            <span className="px-3 py-1 rounded-full text-[11px] font-black font-mono tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 flex items-center gap-1 shadow-md shadow-emerald-950/40">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                              PRESENT
-                            </span>
-                          )}
-                          {r.status === 'LATE' && (
-                            <span className="px-3 py-1 rounded-full text-[11px] font-black font-mono tracking-wider bg-amber-500/20 text-amber-300 border border-amber-500/50 flex items-center gap-1 shadow-md shadow-amber-950/40">
-                              <Clock className="w-3.5 h-3.5 text-amber-400" />
-                              LATE
-                            </span>
-                          )}
-                          {r.status === 'ABSENT' && (
-                            <span className="px-3 py-1 rounded-full text-[11px] font-black font-mono tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/50 flex items-center gap-1">
-                              <XCircle className="w-3.5 h-3.5 text-rose-400" />
-                              ABSENT
-                            </span>
-                          )}
-                          {r.status === 'EXCUSED' && (
-                            <Badge status={r.status} />
-                          )}
+                        {/* Subject Details */}
+                        <div className="flex items-center justify-between gap-2 mt-1">
+                          <div className="font-bold text-white text-sm">
+                            {r.subjectName}
+                          </div>
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-950/80 text-blue-300 border border-blue-800/60 shrink-0">
+                            {r.subjectCode}
+                          </span>
                         </div>
-                      </div>
 
-                      {/* Biometric Verification Footer */}
-                      <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between text-[11px] text-slate-400">
-                        {isPresent ? (
-                          <div className="flex items-center gap-2 text-emerald-300 font-mono">
-                            <span className="flex items-center gap-1">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                              Punch Time: {r.verificationTime || r.biometricTime}
+                        {/* Footer Details: Room & Biometric Punch Verification */}
+                        <div className="mt-3 pt-2.5 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-[11px] text-slate-400 gap-2">
+                          <div className="flex items-center gap-1">
+                            <MapPin className="w-3.5 h-3.5 text-slate-500" />
+                            <span>{r.classroom}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {isPresent ? (
+                              <div className="flex items-center gap-1 text-emerald-400 font-mono text-[10px]">
+                                <Scan className="w-3 h-3 text-emerald-400" />
+                                <span>Punch: {r.verificationTime || r.biometricTime || 'Verified'}</span>
+                              </div>
+                            ) : (
+                              <div className="text-rose-400/80 font-mono text-[10px]">
+                                No Punch Detected
+                              </div>
+                            )}
+
+                            <span className="text-slate-600">|</span>
+                            <span className="text-slate-500 font-mono text-[10px]">
+                              {r.deviceName || 'Terminal'}
                             </span>
                           </div>
-                        ) : (
-                          <div className="text-rose-400/80 font-mono text-[10px]">
-                            Auto-finalized Absent (Unscanned after period ended)
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-1 text-slate-400 font-mono text-[10px]">
-                          <Scan className="w-3 h-3 text-blue-400" />
-                          <span>{r.deviceName || 'Terminal Biometric Scanner'}</span>
-                          {r.isTestMode && (
-                            <span className="ml-1 text-[9px] text-amber-400 font-bold">(Test Scan)</span>
-                          )}
                         </div>
-                      </div>
                     </div>
                   );
                 })}

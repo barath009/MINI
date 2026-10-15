@@ -11,8 +11,12 @@ import { Classroom } from '../models/Classroom';
 import { Faculty } from '../models/Faculty';
 import { BiometricProfile } from '../models/BiometricProfile';
 import { ClassAllocation } from '../models/ClassAllocation';
+import { Timetable } from '../models/Timetable';
 import { AttendanceEngine } from '../services/attendanceEngine';
 import { emitDeviceStatus, emitAttendanceEvent } from '../services/socketService';
+import { clockService, getEffectiveKolkataTime } from '../services/clockService';
+import { normalizeCalendarDate } from './adminTimetableController';
+import { ensureSessionForScheduledClass } from '../services/sessionService';
 import { recognizeAttendanceSchema } from '../validators';
 import { AppError } from '../errors/AppError';
 
@@ -201,56 +205,67 @@ export const kioskRecognize = async (req: Request, res: Response, next: NextFunc
 
     const matchedConfidence = parseFloat(bestScore.toFixed(4));
 
-    // ── Resolve Allocated Staff (Faculty) for this student ──
-    const allocation = await ClassAllocation.findOne({ studentId: student._id, status: 'ACTIVE' });
-    let targetFacultyId = allocation?.facultyId;
+    // ── Check Current Time against Student's Scheduled Timetable ──
+    const effectiveTime = getEffectiveKolkataTime();
+    const nowMinutes = effectiveTime.totalMinutes;
+    const { normalizedDate } = normalizeCalendarDate(effectiveTime.dateStr);
 
-    if (!targetFacultyId) {
-      const deptFaculty = await Faculty.findOne({ departmentId: student.departmentId });
-      targetFacultyId = deptFaculty?._id || (await Faculty.findOne())?._id;
-    }
+    const scheduledClasses = await Timetable.find({
+      sectionId: student.sectionId?._id || student.sectionId,
+      date: normalizedDate,
+      status: { $ne: 'CANCELLED' },
+    })
+      .populate('subjectId')
+      .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+      .populate('classroomId');
 
-    // ── Get or create active attendance session for this student's allocated staff ──
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    let session = await AttendanceSession.findOne({
-      facultyId: targetFacultyId,
-      status: 'ACTIVE',
-      date: { $gte: todayStart },
+    const matchingClass: any = scheduledClasses.find((cls: any) => {
+      const [sh, sm] = (cls.startTime || '09:00').split(':').map(Number);
+      const [eh, em] = (cls.endTime || '10:00').split(':').map(Number);
+      const startMin = sh * 60 + sm;
+      const endMin = eh * 60 + em;
+      return nowMinutes >= startMin && nowMinutes <= endMin;
     });
 
-    if (!session) {
-      session = await AttendanceSession.findOne({ facultyId: targetFacultyId }).sort({ createdAt: -1 });
-    }
-
-    if (!session) {
-      const classroom = await Classroom.findOne();
-      session = await AttendanceSession.create({
-        sessionId: `KIOSK_${Date.now().toString().slice(-6)}`,
-        facultyId: targetFacultyId,
-        subjectId: allocation?.subjectId,
-        sectionId: student.sectionId || allocation?.sectionId,
-        classroomId: classroom?._id,
-        date: new Date(),
-        startTime: '09:00',
-        endTime: '17:00',
-        status: 'ACTIVE',
-        academicYear: '2026-2027',
+    // ── Strict rule: If biometric punch does not match any scheduled class time, NO attendance update ──
+    if (!matchingClass) {
+      return res.status(200).json({
+        success: false,
+        recognized: true,
+        scheduledMatch: false,
+        message: `Face recognized for ${student.userId?.name || student.registerNumber}, but no scheduled class matches current time (${effectiveTime.timeStr}). Attendance not updated.`,
+        data: {
+          studentName: student.userId?.name,
+          registerNumber: student.registerNumber,
+          currentTime: effectiveTime.timeStr,
+          date: effectiveTime.dateStr,
+        },
       });
     }
 
-    // ── Upsert attendance record for allocated staff ──
+    // ── Ensure active session exists for this scheduled class period ──
+    const session = await ensureSessionForScheduledClass(matchingClass);
+
+    // ── Calculate Attendance Status (Grace Period = 10 minutes) ──
+    const [startH, startM] = (matchingClass.startTime || '09:00').split(':').map(Number);
+    const startMin = startH * 60 + startM;
+    const attendanceStatus = nowMinutes <= startMin + 10 ? 'PRESENT' : 'LATE';
+
+    // ── Record Attendance for this exact class period ──
     const record = await AttendanceRecord.findOneAndUpdate(
-      { studentId: student._id, sessionId: session._id },
+      { studentId: student._id, timetableId: matchingClass._id },
       {
         studentId: student._id,
         sessionId: session._id,
-        facultyId: targetFacultyId,
-        classroomId: session.classroomId,
-        date: session.date,
-        timestamp: new Date(),
-        status: 'PRESENT',
+        timetableId: matchingClass._id,
+        subjectId: matchingClass.subjectId?._id || matchingClass.subjectId,
+        facultyId: matchingClass.facultyId?._id || matchingClass.facultyId,
+        sectionId: student.sectionId?._id || student.sectionId,
+        classroomId: matchingClass.classroomId?._id || matchingClass.classroomId,
+        date: matchingClass.date,
+        timestamp: clockService.getEffectiveNow(),
+        realTimestamp: new Date(),
+        status: attendanceStatus,
         markedBy: 'SYSTEM',
         recognitionMethod: 'FACE_RECOGNITION',
         confidenceScore: matchedConfidence,
@@ -268,7 +283,9 @@ export const kioskRecognize = async (req: Request, res: Response, next: NextFunc
       attendanceId: record._id,
       studentName: student.userId?.name,
       registerNumber: student.registerNumber,
-      status: 'PRESENT',
+      subjectName: matchingClass.subjectId?.name,
+      periodNumber: matchingClass.periodNumber,
+      status: attendanceStatus,
       confidence: matchedConfidence,
       timestamp: record.timestamp,
     });
@@ -276,17 +293,28 @@ export const kioskRecognize = async (req: Request, res: Response, next: NextFunc
       attendanceId: record._id,
       studentName: student.userId?.name,
     });
+    emitAttendanceEvent('timetable.updated', {
+      date: effectiveTime.dateStr,
+      sectionId: student.sectionId?.toString(),
+    });
+    emitAttendanceEvent('attendance.session_status', {
+      sessionId: session.sessionId,
+      status: 'ACTIVE',
+    });
 
     return res.status(200).json({
       success: true,
       recognized: true,
-      message: `Face Recognized! ${student.userId?.name || student.registerNumber} marked PRESENT (confidence: ${(matchedConfidence * 100).toFixed(1)}%)`,
+      scheduledMatch: true,
+      message: `Face Recognized! Attendance marked ${attendanceStatus} for ${student.userId?.name || student.registerNumber} - ${matchingClass.subjectId?.name || 'Class'} (Hour ${matchingClass.periodNumber})`,
       data: {
         attendanceId: record._id,
         studentName: student.userId?.name,
         registerNumber: student.registerNumber,
         department: student.departmentId?.name || 'Engineering',
-        status: 'PRESENT',
+        subject: matchingClass.subjectId?.name,
+        periodNumber: matchingClass.periodNumber,
+        status: attendanceStatus,
         confidence: matchedConfidence,
         timestamp: record.timestamp,
       },

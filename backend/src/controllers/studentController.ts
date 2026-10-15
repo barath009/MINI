@@ -12,7 +12,7 @@ import { Subject } from '../models/Subject';
 import { AttendanceSession } from '../models/AttendanceSession';
 import { reportAttendanceIssueSchema, updateStudentProfileSchema } from '../validators';
 import { createAuditLog } from '../services/auditService';
-import { clockService } from '../services/clockService';
+import { clockService, getEffectiveKolkataTime } from '../services/clockService';
 import { normalizeCalendarDate } from './adminTimetableController';
 
 export const getStudentDashboard = async (req: any, res: Response, next: NextFunction) => {
@@ -262,7 +262,7 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
     const student = await Student.findOne({ userId: req.user._id });
     if (!student) throw new AppError('Student academic profile not found.', 404);
 
-    const { subjectId, status, month, startDate, endDate, search, page = 1, limit = 20 } = req.query;
+    const { subjectId, status, month, startDate, endDate, date, search, page = 1, limit = 20 } = req.query;
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(limit as string, 10) || 20;
     const skip = (pageNum - 1) * limitNum;
@@ -277,7 +277,12 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
       query.status = status;
     }
 
-    if (startDate || endDate) {
+    if (date) {
+      const { normalizedDate } = normalizeCalendarDate(date as string);
+      const nextDay = new Date(normalizedDate);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      query.date = { $gte: normalizedDate, $lt: nextDay };
+    } else if (startDate || endDate) {
       query.date = {};
       if (startDate) query.date.$gte = normalizeCalendarDate(startDate as string).normalizedDate;
       if (endDate) {
@@ -318,9 +323,23 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
 
     let formattedRecords = records.map((r: any) => {
       const periodNum = r.timetableId?.periodNumber || 1;
-      const formattedDate = new Date(r.date).toLocaleDateString('en-US', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
-      const timeStr = r.timestamp ? new Date(r.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }) : null;
+      const formattedDate = new Date(r.date).toLocaleDateString('en-US', {
+        timeZone: 'Asia/Kolkata',
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+      const timeStr = r.timestamp
+        ? new Date(r.timestamp).toLocaleTimeString('en-US', {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          })
+        : null;
       const devName = r.deviceId?.deviceName || r.deviceId?.deviceId || (r.recognitionMethod === 'MANUAL_OVERRIDE' ? 'Admin Override' : 'Biometric Terminal');
+      const facultyName = r.facultyId?.userId?.name || (r.facultyId as any)?.name || 'Assigned Faculty';
 
       return {
         id: r._id,
@@ -335,7 +354,8 @@ export const getAttendanceHistory = async (req: any, res: Response, next: NextFu
         verificationTime: timeStr,
         subjectName: r.subjectId?.name || 'Class Session',
         subjectCode: r.subjectId?.code || 'SUB',
-        facultyName: r.facultyId?.userId?.name || (r.facultyId as any)?.name || 'Assigned Faculty',
+        facultyName,
+        markedBy: facultyName,
         classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
         status: r.status,
         recognitionMethod: r.recognitionMethod,
@@ -412,8 +432,9 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
       }
     });
 
-    const effectiveNow = clockService.getEffectiveNow();
-    const nowMinutes = effectiveNow.getHours() * 60 + effectiveNow.getMinutes();
+    const effectiveKolkata = getEffectiveKolkataTime();
+    const todayStr = effectiveKolkata.dateStr;
+    const nowMinutes = effectiveKolkata.totalMinutes;
 
     const formattedClasses = timetableRecords.map((t: any) => {
       const existingRecord = attMap.get(t._id.toString());
@@ -431,16 +452,34 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
       } else if (existingRecord) {
         computedStatus = existingRecord.status;
         verificationTime = existingRecord.timestamp
-          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true,
+            })
           : null;
         deviceName = (existingRecord.deviceId as any)?.deviceName || (existingRecord.deviceId as any)?.deviceId || 'Biometric Scanner';
       } else {
-        if (nowMinutes < startMin) {
+        // No attendance punch record yet
+        if (dateStr > todayStr) {
+          // Future date
           computedStatus = 'UPCOMING';
-        } else if (nowMinutes <= endMin) {
-          computedStatus = 'PENDING';
-        } else {
+        } else if (dateStr < todayStr) {
+          // Past date with no punch -> Absent
           computedStatus = 'ABSENT';
+        } else {
+          // Today's date
+          if (nowMinutes < startMin) {
+            // Next / future hour today -> UPCOMING
+            computedStatus = 'UPCOMING';
+          } else if (nowMinutes <= endMin) {
+            // Current scheduled class period in progress -> ACTIVE
+            computedStatus = 'ACTIVE';
+          } else {
+            // Class hour has passed today without punch -> ABSENT
+            computedStatus = 'ABSENT';
+          }
         }
       }
 
@@ -458,7 +497,7 @@ export const getStudentTimetable = async (req: any, res: Response, next: NextFun
         verificationTime,
         deviceName,
         notes: t.notes || '',
-        isCurrent: nowMinutes >= startMin && nowMinutes <= endMin,
+        isCurrent: dateStr === todayStr && nowMinutes >= startMin && nowMinutes <= endMin,
       };
     });
 

@@ -68,6 +68,10 @@ export const StudentTimetable: React.FC = () => {
 
   useEffect(() => {
     fetchTimetable();
+    const interval = setInterval(() => {
+      fetchTimetable();
+    }, 30000);
+    return () => clearInterval(interval);
   }, [selectedDate]);
 
   useEffect(() => {
@@ -78,11 +82,13 @@ export const StudentTimetable: React.FC = () => {
     socket.on('timetable.updated', handleUpdate);
     socket.on('attendance.session_status', handleUpdate);
     socket.on('attendance.verified', handleUpdate);
+    socket.on('attendance.marked', handleUpdate);
 
     return () => {
       socket.off('timetable.updated', handleUpdate);
       socket.off('attendance.session_status', handleUpdate);
       socket.off('attendance.verified', handleUpdate);
+      socket.off('attendance.marked', handleUpdate);
     };
   }, [socket, selectedDate]);
 
@@ -199,6 +205,7 @@ export const StudentTimetable: React.FC = () => {
           {classes.map((cls: any) => {
             const isPresent = cls.status === 'PRESENT' || cls.status === 'LATE';
             const isAbsent = cls.status === 'ABSENT';
+            const isActive = cls.status === 'ACTIVE' || cls.status === 'ONGOING' || (!isPresent && !isAbsent && cls.isCurrent);
             const isPending = cls.status === 'PENDING';
             const isUpcoming = cls.status === 'UPCOMING';
             const isCancelled = cls.status === 'CANCELLED';
@@ -211,6 +218,8 @@ export const StudentTimetable: React.FC = () => {
                     ? 'bg-emerald-950/20 border-emerald-900/60 shadow-emerald-950/20'
                     : isAbsent
                     ? 'bg-rose-950/20 border-rose-900/60 shadow-rose-950/20'
+                    : isActive
+                    ? 'bg-cyan-950/25 border-cyan-500/70 shadow-lg shadow-cyan-950/40 ring-1 ring-cyan-500/30'
                     : isPending
                     ? 'bg-blue-950/30 border-blue-800 shadow-blue-950/20'
                     : isCancelled
@@ -226,6 +235,8 @@ export const StudentTimetable: React.FC = () => {
                         ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
                         : isAbsent
                         ? 'bg-rose-950 text-rose-300 border-rose-800'
+                        : isActive
+                        ? 'bg-cyan-950 text-cyan-300 border-cyan-500 shadow-sm shadow-cyan-500/50'
                         : isPending
                         ? 'bg-blue-950 text-blue-300 border-blue-800 animate-pulse'
                         : 'bg-slate-950 text-cyan-300 border-slate-800'
@@ -295,19 +306,28 @@ export const StudentTimetable: React.FC = () => {
                         ABSENT
                       </span>
                     )}
-                    {isPending && (
+                    {isActive && !isPresent && (
+                      <span className="px-3.5 py-1.5 rounded-full text-xs font-black font-mono tracking-wider bg-cyan-500/20 text-cyan-300 border border-cyan-500/60 flex items-center gap-2 shadow-md shadow-cyan-950/40">
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                        </span>
+                        ACTIVE
+                      </span>
+                    )}
+                    {isPending && !isActive && (
                       <span className="px-3.5 py-1.5 rounded-full text-xs font-black font-mono tracking-wider bg-blue-500/20 text-blue-300 border border-blue-500/50 flex items-center gap-1.5 animate-pulse">
                         <Clock className="w-4 h-4 text-blue-400" />
                         PENDING SCAN
                       </span>
                     )}
-                    {isUpcoming && (
-                      <span className="px-3 py-1.5 rounded-full text-xs font-bold font-mono tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
+                    {isUpcoming && !isActive && (
+                      <span className="px-3.5 py-1.5 rounded-full text-xs font-bold font-mono tracking-wider bg-slate-800 text-slate-300 border border-slate-700">
                         UPCOMING
                       </span>
                     )}
                     {isCancelled && (
-                      <span className="px-3 py-1.5 rounded-full text-xs font-bold font-mono tracking-wider bg-rose-900/60 text-rose-200 border border-rose-700">
+                      <span className="px-3.5 py-1.5 rounded-full text-xs font-bold font-mono tracking-wider bg-rose-900/60 text-rose-200 border border-rose-700">
                         CANCELLED
                       </span>
                     )}

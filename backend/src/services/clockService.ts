@@ -241,3 +241,43 @@ class CentralizedClockService {
 }
 
 export const clockService = new CentralizedClockService();
+
+export interface KolkataTimeInfo {
+  hours: number;
+  minutes: number;
+  totalMinutes: number;
+  timeStr: string;
+  dateStr: string;
+  dayOfWeek: string;
+}
+
+export const getKolkataTimeMinutes = (date?: Date): KolkataTimeInfo => {
+  const targetDate = date || new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(targetDate);
+  const hPart = parts.find((p) => p.type === 'hour')?.value || '0';
+  const mPart = parts.find((p) => p.type === 'minute')?.value || '0';
+  let hours = parseInt(hPart, 10);
+  if (hours === 24) hours = 0;
+  const minutes = parseInt(mPart, 10);
+  const totalMinutes = hours * 60 + minutes;
+  const timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+
+  const dateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' });
+  const dateStr = dateFormatter.format(targetDate);
+
+  const dayFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' });
+  const dayOfWeek = dayFormatter.format(targetDate).toUpperCase();
+
+  return { hours, minutes, totalMinutes, timeStr, dateStr, dayOfWeek };
+};
+
+export const getEffectiveKolkataTime = (): KolkataTimeInfo => {
+  const eff = clockService.getEffectiveNow();
+  return getKolkataTimeMinutes(eff);
+};

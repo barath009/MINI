@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError';
 import { ParentWard } from '../models/ParentWard';
@@ -5,8 +6,7 @@ import { Student } from '../models/Student';
 import { AttendanceRecord } from '../models/AttendanceRecord';
 import { ClassAllocation } from '../models/ClassAllocation';
 import { Timetable } from '../models/Timetable';
-import mongoose from 'mongoose';
-import { clockService } from '../services/clockService';
+import { clockService, getEffectiveKolkataTime } from '../services/clockService';
 import { normalizeCalendarDate } from './adminTimetableController';
 
 export const getParentDashboard = async (req: any, res: Response, next: NextFunction) => {
@@ -429,8 +429,9 @@ export const getWardTimetable = async (req: any, res: Response, next: NextFuncti
       }
     });
 
-    const effectiveNow = clockService.getEffectiveNow();
-    const nowMinutes = effectiveNow.getHours() * 60 + effectiveNow.getMinutes();
+    const effectiveKolkata = getEffectiveKolkataTime();
+    const todayStr = effectiveKolkata.dateStr;
+    const nowMinutes = effectiveKolkata.totalMinutes;
 
     const formattedClasses = timetableRecords.map((t: any) => {
       const existingRecord = attMap.get(t._id.toString());
@@ -448,16 +449,27 @@ export const getWardTimetable = async (req: any, res: Response, next: NextFuncti
       } else if (existingRecord) {
         computedStatus = existingRecord.status;
         verificationTime = existingRecord.timestamp
-          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+          ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true,
+            })
           : null;
         deviceName = (existingRecord.deviceId as any)?.deviceName || (existingRecord.deviceId as any)?.deviceId || 'Biometric Scanner';
       } else {
-        if (nowMinutes < startMin) {
+        if (dateStr > todayStr) {
           computedStatus = 'UPCOMING';
-        } else if (nowMinutes <= endMin) {
-          computedStatus = 'PENDING';
-        } else {
+        } else if (dateStr < todayStr) {
           computedStatus = 'ABSENT';
+        } else {
+          if (nowMinutes < startMin) {
+            computedStatus = 'UPCOMING';
+          } else if (nowMinutes <= endMin) {
+            computedStatus = 'ACTIVE';
+          } else {
+            computedStatus = 'ABSENT';
+          }
         }
       }
 
@@ -475,7 +487,7 @@ export const getWardTimetable = async (req: any, res: Response, next: NextFuncti
         verificationTime,
         deviceName,
         notes: t.notes || '',
-        isCurrent: nowMinutes >= startMin && nowMinutes <= endMin,
+        isCurrent: dateStr === todayStr && nowMinutes >= startMin && nowMinutes <= endMin,
       };
     });
 

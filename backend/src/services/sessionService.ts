@@ -2,7 +2,7 @@ import mongoose from 'mongoose';
 import { AttendanceSession, SessionStatus } from '../models/AttendanceSession';
 import { Timetable, ITimetable } from '../models/Timetable';
 import { SystemSetting } from '../models/SystemSetting';
-import { clockService } from './clockService';
+import { clockService, getEffectiveKolkataTime } from './clockService';
 import { AttendanceEngine } from './attendanceEngine';
 import { emitAttendanceEvent } from './socketService';
 
@@ -121,9 +121,7 @@ export class SessionService {
     } else if (classDate.getTime() < effectiveDate.getTime()) {
       status = 'COMPLETED';
     } else if (classDate.getTime() === effectiveDate.getTime()) {
-      const nowH = effectiveNow.getHours();
-      const nowM = effectiveNow.getMinutes();
-      const nowMins = nowH * 60 + nowM;
+      const nowMins = getEffectiveKolkataTime().totalMinutes;
 
       const [sh, sm] = classEntry.startTime.split(':').map(Number);
       const [eh, em] = classEntry.endTime.split(':').map(Number);
@@ -194,9 +192,7 @@ export class SessionService {
     const effectiveNow = clockService.getEffectiveNow();
     const effectiveDate = this.normalizeDate(effectiveNow);
 
-    const nowH = effectiveNow.getHours();
-    const nowM = effectiveNow.getMinutes();
-    const nowMins = nowH * 60 + nowM;
+    const nowMins = getEffectiveKolkataTime().totalMinutes;
 
     let activatedCount = 0;
     let finalizedCount = 0;
