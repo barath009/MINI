@@ -243,11 +243,252 @@ export const getParentWards = async (req: any, res: Response, next: NextFunction
 export const getWardAttendanceHistory = async (req: any, res: Response, next: NextFunction) => {
   try {
     const studentId = req.params.studentId;
-    const { month, subjectId, status, startDate, endDate, page = 1, limit = 20 } = req.query;
+    const { month, subjectId, status, startDate, endDate, date, page = 1, limit = 20 } = req.query;
 
     const pageNum = parseInt(page as string, 10) || 1;
     const limitNum = parseInt(limit as string, 10) || 20;
     const skip = (pageNum - 1) * limitNum;
+
+    if (date) {
+      const student = await Student.findById(studentId);
+      const { normalizedDate, dateStr, dayOfWeek } = normalizeCalendarDate(date as string);
+
+      const ttQuery: any = {
+        sectionId: student?.sectionId?._id || student?.sectionId,
+        date: normalizedDate,
+      };
+      if (subjectId && mongoose.Types.ObjectId.isValid(subjectId as string)) {
+        ttQuery.subjectId = subjectId;
+      }
+
+      const scheduledClasses = await Timetable.find(ttQuery)
+        .sort({ periodNumber: 1 })
+        .populate('subjectId')
+        .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+        .populate('classroomId')
+        .lean();
+
+      const nextDay = new Date(normalizedDate);
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const dayRecords = await AttendanceRecord.find({
+        studentId,
+        date: { $gte: normalizedDate, $lt: nextDay },
+      })
+        .populate('subjectId')
+        .populate({ path: 'facultyId', populate: { path: 'userId', select: 'name' } })
+        .populate('classroomId')
+        .populate('deviceId')
+        .populate('timetableId')
+        .lean();
+
+      const attByTimetable = new Map<string, any>();
+      const attBySubject = new Map<string, any>();
+      dayRecords.forEach((r: any) => {
+        if (r.timetableId?._id) {
+          attByTimetable.set(r.timetableId._id.toString(), r);
+        } else if (r.timetableId) {
+          attByTimetable.set(r.timetableId.toString(), r);
+        }
+        if (r.subjectId?._id) {
+          attBySubject.set(r.subjectId._id.toString(), r);
+        }
+      });
+
+      const effectiveKolkata = getEffectiveKolkataTime();
+      const todayStr = effectiveKolkata.dateStr;
+      const nowMinutes = effectiveKolkata.totalMinutes;
+
+      const matchedAttendanceIds = new Set<string>();
+
+      let combinedRecords = scheduledClasses.map((t: any) => {
+        const existingRecord = attByTimetable.get(t._id.toString()) || attBySubject.get(t.subjectId?._id?.toString());
+        if (existingRecord) {
+          matchedAttendanceIds.add(existingRecord._id.toString());
+        }
+
+        const [sh, sm] = (t.startTime || '09:00').split(':').map((v: string) => parseInt(v, 10));
+        const [eh, em] = (t.endTime || '10:00').split(':').map((v: string) => parseInt(v, 10));
+        const startMin = sh * 60 + sm;
+        const endMin = eh * 60 + em;
+
+        let computedStatus: string = 'UPCOMING';
+        let verificationTime: string | null = null;
+        let deviceName = 'Biometric Terminal';
+
+        if (t.status === 'CANCELLED') {
+          computedStatus = 'CANCELLED';
+        } else if (existingRecord) {
+          computedStatus = existingRecord.status;
+          verificationTime = existingRecord.timestamp
+            ? new Date(existingRecord.timestamp).toLocaleTimeString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+              })
+            : null;
+          deviceName =
+            existingRecord.deviceId?.deviceName ||
+            existingRecord.deviceId?.deviceId ||
+            (existingRecord.recognitionMethod === 'MANUAL_OVERRIDE' ? 'Admin Override' : 'Biometric Terminal');
+        } else {
+          // No punch yet
+          if (dateStr > todayStr) {
+            computedStatus = 'UPCOMING';
+          } else if (dateStr < todayStr) {
+            computedStatus = 'ABSENT';
+          } else {
+            // Today
+            if (nowMinutes < startMin) {
+              computedStatus = 'UPCOMING';
+            } else if (nowMinutes <= endMin) {
+              computedStatus = 'ACTIVE';
+            } else {
+              computedStatus = 'ABSENT';
+            }
+          }
+        }
+
+        const formattedDate = new Date(normalizedDate).toLocaleDateString('en-US', {
+          timeZone: 'Asia/Kolkata',
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        });
+
+        const facultyName = t.facultyId?.userId?.name || (t.facultyId as any)?.name || 'Assigned Faculty';
+
+        return {
+          id: existingRecord?._id || t._id,
+          timetableId: t._id,
+          date: normalizedDate,
+          formattedDate,
+          dateStr,
+          dayOfWeek,
+          periodNumber: t.periodNumber,
+          slot: t.periodNumber <= 3 ? 'Forenoon' : 'Afternoon',
+          startTime: t.startTime,
+          endTime: t.endTime,
+          biometricTime: verificationTime,
+          verificationTime,
+          subjectName: t.subjectId?.name || 'Class Subject',
+          subjectCode: t.subjectId?.code || 'SUB',
+          facultyName,
+          markedBy: facultyName,
+          classroom: t.classroomId ? `${t.classroomId.building} - ${t.classroomId.roomNumber}` : 'Campus Hall',
+          status: computedStatus,
+          isPresent: computedStatus === 'PRESENT' || computedStatus === 'LATE',
+          isAbsent: computedStatus === 'ABSENT',
+          isActive: computedStatus === 'ACTIVE',
+          isUpcoming: computedStatus === 'UPCOMING',
+          recognitionMethod: existingRecord?.recognitionMethod || (computedStatus === 'ABSENT' ? 'SYSTEM_AUTO_ABSENT' : undefined),
+          deviceName,
+          isLate: computedStatus === 'LATE',
+          isTestMode: Boolean(existingRecord?.isTestMode),
+          isCurrent: dateStr === todayStr && nowMinutes >= startMin && nowMinutes <= endMin,
+        };
+      });
+
+      dayRecords.forEach((r: any) => {
+        if (!matchedAttendanceIds.has(r._id.toString())) {
+          const facultyName = r.facultyId?.userId?.name || (r.facultyId as any)?.name || 'Assigned Faculty';
+          const timeStr = r.timestamp
+            ? new Date(r.timestamp).toLocaleTimeString('en-US', {
+                timeZone: 'Asia/Kolkata',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: true,
+              })
+            : null;
+          const formattedDate = new Date(r.date).toLocaleDateString('en-US', {
+            timeZone: 'Asia/Kolkata',
+            weekday: 'short',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          });
+
+          combinedRecords.push({
+            id: r._id,
+            timetableId: r.timetableId?._id || r.timetableId,
+            date: r.date,
+            formattedDate,
+            dateStr,
+            dayOfWeek,
+            periodNumber: r.timetableId?.periodNumber || 99,
+            slot: 'Forenoon',
+            startTime: r.timetableId?.startTime || '09:00',
+            endTime: r.timetableId?.endTime || '10:00',
+            biometricTime: timeStr,
+            verificationTime: timeStr,
+            subjectName: r.subjectId?.name || 'Class Session',
+            subjectCode: r.subjectId?.code || 'SUB',
+            facultyName,
+            markedBy: facultyName,
+            classroom: r.classroomId ? `${r.classroomId.building} - ${r.classroomId.roomNumber}` : 'Campus Hall',
+            status: r.status,
+            isPresent: r.status === 'PRESENT' || r.status === 'LATE',
+            isAbsent: r.status === 'ABSENT',
+            isActive: false,
+            isUpcoming: false,
+            recognitionMethod: r.recognitionMethod,
+            deviceName: r.deviceId?.deviceName || 'Biometric Scanner',
+            isLate: r.status === 'LATE',
+            isTestMode: Boolean(r.isTestMode),
+            isCurrent: false,
+          });
+        }
+      });
+
+      combinedRecords.sort((a, b) => (a.periodNumber || 0) - (b.periodNumber || 0));
+
+      if (status) {
+        combinedRecords = combinedRecords.filter((r) => r.status === status);
+      }
+
+      const dayTotal = combinedRecords.length;
+      const dayPresent = combinedRecords.filter((r) => r.isPresent).length;
+      const dayAbsent = combinedRecords.filter((r) => r.isAbsent).length;
+      const dayActive = combinedRecords.filter((r) => r.isActive).length;
+      const dayUpcoming = combinedRecords.filter((r) => r.isUpcoming).length;
+
+      const [totalAll, presentAll, lateAll, absentAll] = await Promise.all([
+        AttendanceRecord.countDocuments({ studentId }),
+        AttendanceRecord.countDocuments({ studentId, status: 'PRESENT' }),
+        AttendanceRecord.countDocuments({ studentId, status: 'LATE' }),
+        AttendanceRecord.countDocuments({ studentId, status: 'ABSENT' }),
+      ]);
+      const attendedAll = presentAll + lateAll;
+      const attendancePercentage = totalAll > 0 ? parseFloat(((attendedAll / totalAll) * 100).toFixed(1)) : null;
+
+      return res.status(200).json({
+        success: true,
+        data: combinedRecords,
+        date: dateStr,
+        dayOfWeek,
+        daySummary: {
+          totalClasses: dayTotal,
+          presentCount: dayPresent,
+          absentCount: dayAbsent,
+          activeCount: dayActive,
+          upcomingCount: dayUpcoming,
+        },
+        summary: {
+          attendancePercentage,
+          totalEligibleClasses: totalAll,
+          presentCount: attendedAll,
+          absentCount: absentAll,
+          lateCount: lateAll,
+        },
+        pagination: {
+          total: combinedRecords.length,
+          page: 1,
+          limit: combinedRecords.length,
+          totalPages: 1,
+        },
+      });
+    }
 
     const query: any = { studentId };
 

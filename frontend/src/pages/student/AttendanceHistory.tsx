@@ -10,18 +10,18 @@ import {
   User,
   Search,
   Filter,
-  AlertCircle,
   CheckCircle2,
   XCircle,
   Scan,
   TrendingUp,
   LayoutGrid,
   List,
-  Sparkles,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
   RotateCcw,
+  Sparkles,
+  Radio,
 } from 'lucide-react';
 
 const formatTimeRange = (start?: string, end?: string) => {
@@ -46,33 +46,43 @@ const getTodayKolkataStr = () => {
   return ist.toISOString().slice(0, 10);
 };
 
+const getYesterdayKolkataStr = () => {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const ist = new Date(utc + 5.5 * 3600000);
+  ist.setDate(ist.getDate() - 1);
+  return ist.toISOString().slice(0, 10);
+};
+
 export const StudentAttendanceHistory: React.FC = () => {
   const { socket } = useSocket();
+  const todayStr = useMemo(() => getTodayKolkataStr(), []);
+  const yesterdayStr = useMemo(() => getYesterdayKolkataStr(), []);
+
+  // Default to today's date so the student immediately sees today's scheduled classes and attendance status
+  const [dateFilter, setDateFilter] = useState(todayStr);
   const [records, setRecords] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>(null);
+  const [daySummary, setDaySummary] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [monthFilter, setMonthFilter] = useState('');
-  const [dateFilter, setDateFilter] = useState('');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
-
-  const todayStr = useMemo(() => getTodayKolkataStr(), []);
 
   const fetchRecords = async () => {
     try {
       setLoading(true);
       const params: any = { page, limit: 50 };
       if (statusFilter) params.status = statusFilter;
-      if (monthFilter) params.month = monthFilter;
       if (dateFilter) params.date = dateFilter;
 
       const res = await api.get('/student/attendance', { params });
       if (res.data.success) {
         setRecords(res.data.data || []);
         if (res.data.summary) setSummary(res.data.summary);
+        if (res.data.daySummary) setDaySummary(res.data.daySummary);
         if (res.data.pagination) setPagination(res.data.pagination);
       }
     } catch (err) {
@@ -84,7 +94,7 @@ export const StudentAttendanceHistory: React.FC = () => {
 
   useEffect(() => {
     fetchRecords();
-  }, [statusFilter, monthFilter, dateFilter, page]);
+  }, [statusFilter, dateFilter, page]);
 
   useEffect(() => {
     if (!socket) return;
@@ -94,11 +104,13 @@ export const StudentAttendanceHistory: React.FC = () => {
     socket.on('attendance.marked', handleUpdate);
     socket.on('attendance.created', handleUpdate);
     socket.on('attendance.verified', handleUpdate);
+    socket.on('timetable.updated', handleUpdate);
 
     return () => {
       socket.off('attendance.marked', handleUpdate);
       socket.off('attendance.created', handleUpdate);
       socket.off('attendance.verified', handleUpdate);
+      socket.off('timetable.updated', handleUpdate);
     };
   }, [socket]);
 
@@ -150,13 +162,34 @@ export const StudentAttendanceHistory: React.FC = () => {
       map.get(dKey)!.records.push(r);
     });
 
-    // Sort records inside each day by periodNumber ascending
     for (const entry of map.values()) {
       entry.records.sort((a, b) => (a.periodNumber || 0) - (b.periodNumber || 0));
     }
 
     return map;
   }, [filtered]);
+
+  // Compute live counts for the active date
+  const statsForActiveDate = useMemo(() => {
+    if (!dateFilter) return null;
+    const total = records.length;
+    const present = records.filter(r => r.status === 'PRESENT' || r.status === 'LATE').length;
+    const absent = records.filter(r => r.status === 'ABSENT').length;
+    const active = records.filter(r => r.status === 'ACTIVE').length;
+    const upcoming = records.filter(r => r.status === 'UPCOMING').length;
+    return { total, present, absent, active, upcoming };
+  }, [records, dateFilter]);
+
+  const activeDateFormatted = useMemo(() => {
+    if (!dateFilter) return null;
+    const d = new Date(dateFilter + 'T00:00:00');
+    return d.toLocaleDateString('en-US', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  }, [dateFilter]);
 
   return (
     <div className="space-y-6">
@@ -171,7 +204,7 @@ export const StudentAttendanceHistory: React.FC = () => {
             My Attendance
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Hourly biometric attendance verified by IoT facial recognition scanners with server audit stamps.
+            Hour-by-hour scheduled class timetable synchronized with IoT biometric face-recognition logs.
           </p>
         </div>
 
@@ -202,13 +235,13 @@ export const StudentAttendanceHistory: React.FC = () => {
         </div>
       </div>
 
-      {/* Top Summary KPI Badges (Matching User Screenshot 2: 91.15% Attendance | 87.5 Present | 8.5 Absent) */}
+      {/* Top Summary KPI Badges (Semester Overall Stats) */}
       {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {/* Card 1: Attendance Percentage */}
           <div className="p-5 rounded-2xl bg-gradient-to-br from-cyan-950/40 via-slate-900 to-slate-900 border border-cyan-800/50 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400">Attendance Percentage</span>
+              <span className="text-xs font-bold text-slate-400">Semester Percentage</span>
               <TrendingUp className="w-4 h-4 text-cyan-400" />
             </div>
             <div className="text-3xl font-black text-white font-mono">
@@ -228,7 +261,7 @@ export const StudentAttendanceHistory: React.FC = () => {
           {/* Card 2: Total Classes Present */}
           <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/40 via-slate-900 to-slate-900 border border-emerald-800/50 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400">Present</span>
+              <span className="text-xs font-bold text-slate-400">Total Attended</span>
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="text-3xl font-black text-emerald-300 font-mono">
@@ -242,7 +275,7 @@ export const StudentAttendanceHistory: React.FC = () => {
           {/* Card 3: Total Classes Absent */}
           <div className="p-5 rounded-2xl bg-gradient-to-br from-rose-950/40 via-slate-900 to-slate-900 border border-rose-800/50 shadow-xl">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold text-slate-400">Absent</span>
+              <span className="text-xs font-bold text-slate-400">Total Absences</span>
               <XCircle className="w-4 h-4 text-rose-400" />
             </div>
             <div className="text-3xl font-black text-rose-300 font-mono">
@@ -255,124 +288,190 @@ export const StudentAttendanceHistory: React.FC = () => {
         </div>
       )}
 
-      {/* Day Wise Navigation Bar */}
-      <div className="glass-card p-4 rounded-2xl border border-slate-800 flex flex-col md:flex-row gap-3 justify-between items-center shadow-lg">
-        {/* Day Selectors */}
-        <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
-          <button
-            onClick={() => {
-              setDateFilter('');
-              setPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              !dateFilter
-                ? 'bg-cyan-500 text-slate-950 shadow-md font-black'
-                : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
-            }`}
-          >
-            All Days
-          </button>
-          <button
-            onClick={() => {
-              setDateFilter(todayStr);
-              setPage(1);
-            }}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-              dateFilter === todayStr
-                ? 'bg-cyan-500 text-slate-950 shadow-md font-black'
-                : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
-            }`}
-          >
-            Today
-          </button>
-
-          {/* Day Steppers */}
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-0.5">
+      {/* Interactive Date Selector & Day Navigation Toolbar */}
+      <div className="glass-card p-4 rounded-2xl border border-slate-800 space-y-3.5 shadow-lg">
+        <div className="flex flex-col md:flex-row gap-3 justify-between items-center">
+          {/* Quick Date Buttons & Date Picker */}
+          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto">
             <button
-              onClick={handlePrevDay}
-              title="Previous Day"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <input
-              type="date"
-              value={dateFilter}
-              onChange={(e) => {
-                setDateFilter(e.target.value);
+              onClick={() => {
+                setDateFilter(todayStr);
                 setPage(1);
               }}
-              className="px-2 py-1 bg-transparent text-xs text-slate-200 font-mono focus:outline-none cursor-pointer"
-            />
-            <button
-              onClick={handleNextDay}
-              title="Next Day"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                dateFilter === todayStr
+                  ? 'bg-cyan-500 text-slate-950 shadow-md font-black ring-2 ring-cyan-400/50'
+                  : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
+              }`}
             >
-              <ChevronRight className="w-4 h-4" />
+              <Calendar className="w-3.5 h-3.5" />
+              <span>Today</span>
             </button>
-          </div>
 
-          {dateFilter && (
+            <button
+              onClick={() => {
+                setDateFilter(yesterdayStr);
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                dateFilter === yesterdayStr
+                  ? 'bg-cyan-500 text-slate-950 shadow-md font-black ring-2 ring-cyan-400/50'
+                  : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
+              }`}
+            >
+              <span>Yesterday</span>
+            </button>
+
+            {/* Date Stepper with Native Picker */}
+            <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-0.5">
+              <button
+                onClick={handlePrevDay}
+                title="Previous Day"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <input
+                type="date"
+                value={dateFilter}
+                onChange={(e) => {
+                  setDateFilter(e.target.value);
+                  setPage(1);
+                }}
+                className="px-2 py-1 bg-transparent text-xs text-slate-200 font-mono focus:outline-none cursor-pointer"
+              />
+              <button
+                onClick={handleNextDay}
+                title="Next Day"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+
             <button
               onClick={() => {
                 setDateFilter('');
                 setPage(1);
               }}
-              className="text-[11px] text-cyan-400 hover:text-cyan-300 font-semibold flex items-center gap-1"
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                !dateFilter
+                  ? 'bg-cyan-500 text-slate-950 shadow-md font-black ring-2 ring-cyan-400/50'
+                  : 'bg-slate-900 text-slate-300 hover:text-white border border-slate-800'
+              }`}
             >
-              <RotateCcw className="w-3 h-3" /> Clear Date
+              All Dates
             </button>
-          )}
-        </div>
-
-        {/* Search & Status Filter */}
-        <div className="flex items-center gap-2.5 w-full md:w-auto">
-          <div className="relative flex-1 md:w-60">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search subject, faculty..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
-            />
           </div>
 
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value);
-              setPage(1);
-            }}
-            className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-semibold"
-          >
-            <option value="">All Statuses</option>
-            <option value="PRESENT">Present</option>
-            <option value="LATE">Late</option>
-            <option value="ABSENT">Absent</option>
-            <option value="EXCUSED">Excused</option>
-          </select>
+          {/* Search & Status Filters */}
+          <div className="flex items-center gap-2.5 w-full md:w-auto">
+            <div className="relative flex-1 md:w-56">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search subject, faculty..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 text-xs text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                setPage(1);
+              }}
+              className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-200 focus:outline-none focus:border-cyan-500 font-semibold"
+            >
+              <option value="">All Statuses</option>
+              <option value="PRESENT">Present</option>
+              <option value="ACTIVE">In Progress</option>
+              <option value="UPCOMING">Upcoming</option>
+              <option value="ABSENT">Absent</option>
+            </select>
+          </div>
         </div>
+
+        {/* Selected Date Header & Hour-by-Hour Summary Bar */}
+        {dateFilter && (
+          <div className="pt-3 border-t border-slate-800/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold text-slate-300">
+                Classes Scheduled for:
+              </span>
+              <span className="text-xs font-extrabold text-white">
+                {activeDateFormatted}
+              </span>
+              {dateFilter === todayStr && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-black bg-cyan-950 text-cyan-300 border border-cyan-700">
+                  TODAY
+                </span>
+              )}
+            </div>
+
+            {statsForActiveDate && (
+              <div className="flex items-center gap-2 flex-wrap text-xs font-mono">
+                <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-slate-300 border border-slate-800 font-bold">
+                  {statsForActiveDate.total} Classes Scheduled
+                </span>
+                <span className="px-2.5 py-0.5 rounded-lg bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 font-bold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  {statsForActiveDate.present} Present
+                </span>
+                {statsForActiveDate.absent > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-lg bg-rose-950/70 text-rose-400 border border-rose-800/80 font-bold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                    {statsForActiveDate.absent} Absent
+                  </span>
+                )}
+                {statsForActiveDate.active > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-lg bg-cyan-950/70 text-cyan-300 border border-cyan-600 font-bold flex items-center gap-1 animate-pulse">
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                    {statsForActiveDate.active} In Progress
+                  </span>
+                )}
+                {statsForActiveDate.upcoming > 0 && (
+                  <span className="px-2.5 py-0.5 rounded-lg bg-slate-900/90 text-slate-400 border border-slate-800 font-bold">
+                    {statsForActiveDate.upcoming} Upcoming
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Main Content Area */}
       {loading ? (
         <div className="p-12 text-center text-xs text-slate-400 bg-slate-900/60 rounded-2xl border border-slate-800 animate-pulse">
-          Loading verified biometric attendance records...
+          Loading scheduled classes and biometric attendance for {dateFilter || 'selected period'}...
         </div>
       ) : filtered.length === 0 ? (
         <div className="glass-card p-12 rounded-2xl border border-slate-800 text-center space-y-3">
           <CheckSquare className="w-10 h-10 text-slate-600 mx-auto" />
-          <h3 className="text-base font-bold text-slate-300">No attendance records found</h3>
+          <h3 className="text-base font-bold text-slate-300">
+            {dateFilter ? `No classes scheduled on ${activeDateFormatted}` : 'No attendance records found'}
+          </h3>
           <p className="text-xs text-slate-500 max-w-sm mx-auto">
             {dateFilter
-              ? `No biometric attendance records recorded for ${dateFilter}.`
+              ? 'No classes were found scheduled on your section timetable for this calendar date.'
               : 'No biometric attendance records matched your filter criteria.'}
           </p>
+          {dateFilter !== todayStr && (
+            <button
+              onClick={() => setDateFilter(todayStr)}
+              className="mt-2 px-4 py-2 rounded-xl text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md inline-flex items-center gap-2"
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              <span>View Today's Classes ({todayStr})</span>
+            </button>
+          )}
         </div>
       ) : viewMode === 'cards' ? (
-        /* Card View matching user screenshot */
+        /* Card View: Organized Hour-by-Hour */
         <div className="space-y-7">
           {Array.from(groupedByDate.values()).map((dayGroup) => {
             const dayRecords = dayGroup.records;
@@ -382,37 +481,41 @@ export const StudentAttendanceHistory: React.FC = () => {
 
             return (
               <div key={dayGroup.rawDate} className="space-y-3.5">
-                {/* Day Header matching Image 2 */}
-                <div className="flex items-center justify-between px-1">
-                  <div className="flex items-center gap-2.5">
-                    <Calendar className="w-4 h-4 text-cyan-400" />
-                    <h3 className="text-base font-black text-white tracking-wide flex items-center gap-2">
-                      {dayGroup.formattedDate}
-                      {isToday && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-700">
-                          TODAY
+                {/* Day Header (Only shown when browsing All Dates) */}
+                {!dateFilter && (
+                  <div className="flex items-center justify-between px-1">
+                    <div className="flex items-center gap-2.5">
+                      <Calendar className="w-4 h-4 text-cyan-400" />
+                      <h3 className="text-base font-black text-white tracking-wide flex items-center gap-2">
+                        {dayGroup.formattedDate}
+                        {isToday && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-700">
+                            TODAY
+                          </span>
+                        )}
+                      </h3>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs font-mono">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 font-bold">
+                        {dayPresent} Present
+                      </span>
+                      {dayAbsent > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-rose-950/70 text-rose-400 border border-rose-800/80 font-bold">
+                          {dayAbsent} Absent
                         </span>
                       )}
-                    </h3>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 text-xs font-mono">
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-950/70 text-emerald-400 border border-emerald-800/80 font-bold">
-                      {dayPresent} Present
-                    </span>
-                    {dayAbsent > 0 && (
-                      <span className="px-2 py-0.5 rounded-md bg-rose-950/70 text-rose-400 border border-rose-800/80 font-bold">
-                        {dayAbsent} Absent
-                      </span>
-                    )}
-                  </div>
-                </div>
+                )}
 
-                {/* Period Cards Grid matching Image 2 Design */}
+                {/* Hour-by-Hour Cards Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                   {dayRecords.map((r: any) => {
                     const isPresent = r.status === 'PRESENT' || r.status === 'LATE';
                     const isAbsent = r.status === 'ABSENT';
-                    const facultyName = r.markedBy || r.facultyName || 'Sivabalakrishnan R';
+                    const isActive = r.status === 'ACTIVE';
+                    const isUpcoming = r.status === 'UPCOMING';
+                    const facultyName = r.markedBy || r.facultyName || 'Assigned Faculty';
                     const timeRangeText = formatTimeRange(r.startTime, r.endTime);
 
                     return (
@@ -421,42 +524,60 @@ export const StudentAttendanceHistory: React.FC = () => {
                         className={`p-4 rounded-2xl border transition-all ${
                           isPresent
                             ? 'bg-slate-900/90 border-slate-800 hover:border-emerald-600/50 shadow-lg'
+                            : isActive
+                            ? 'bg-gradient-to-br from-cyan-950/30 via-slate-900 to-slate-900 border-cyan-500 shadow-xl shadow-cyan-950/40 ring-1 ring-cyan-500/50'
                             : isAbsent
                             ? 'bg-rose-950/15 border-rose-900/40 hover:border-rose-600/50'
-                            : 'bg-slate-900/90 border-slate-800'
+                            : 'bg-slate-900/70 border-slate-800/80 hover:border-slate-700'
                         }`}
                       >
-                        {/* Top Line: Marked by: Faculty Name (Matching Screenshot 2) */}
+                        {/* Top Line: Faculty & Hour Number */}
                         <div className="flex items-center justify-between text-xs text-slate-300 border-b border-slate-800/80 pb-2 mb-2.5">
                           <div className="flex items-center gap-1.5">
                             <span className="text-slate-400">Marked by:</span>
                             <span className="font-extrabold text-white">{facultyName}</span>
                           </div>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-950 text-cyan-300 border border-slate-800">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold border ${
+                            isActive
+                              ? 'bg-cyan-950 text-cyan-300 border-cyan-600'
+                              : isPresent
+                              ? 'bg-emerald-950 text-emerald-300 border-emerald-800'
+                              : 'bg-slate-950 text-slate-400 border-slate-800'
+                          }`}>
                             Hour {r.periodNumber || 1}
                           </span>
                         </div>
 
-                        {/* Middle Line: Time • Slot • Status (Matching Screenshot 2) */}
+                        {/* Middle Line: Time • Slot • Status (Shows Present or Not) */}
                         <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
                           <div className="flex items-center gap-1.5 text-xs text-slate-300 font-medium">
                             <Clock className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{timeRangeText || '10:40 am to 11:30 am'}</span>
+                            <span className="font-mono text-slate-200 font-bold">{timeRangeText || '09:00 am to 10:00 am'}</span>
                             <span className="text-slate-500">•</span>
                             <span className="text-slate-400">{r.slot || 'Forenoon'}</span>
                           </div>
 
-                          {/* Status Indicator with Dot */}
+                          {/* Status Badge with Live Indicator */}
                           <div>
                             {isPresent ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950/60 text-emerald-400 border border-emerald-800/80 shadow-sm">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-950/80 text-emerald-300 border border-emerald-500/80 shadow-sm shadow-emerald-950/50">
                                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                                Present
+                                PRESENT
                               </span>
                             ) : isAbsent ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-950/60 text-rose-400 border border-rose-800/80 shadow-sm">
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-950/80 text-rose-300 border border-rose-500/80 shadow-sm shadow-rose-950/50">
                                 <span className="w-2 h-2 rounded-full bg-rose-400"></span>
-                                Absent
+                                ABSENT
+                              </span>
+                            ) : isActive ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-cyan-950 text-cyan-300 border border-cyan-500 shadow-md shadow-cyan-950/60 animate-pulse">
+                                <span className="w-2 h-2 rounded-full bg-cyan-400"></span>
+                                ACTIVE • IN PROGRESS
+                              </span>
+                            ) : isUpcoming ? (
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-900 text-slate-400 border border-slate-800">
+                                <Clock className="w-3 h-3 text-slate-500" />
+                                UPCOMING
                               </span>
                             ) : (
                               <Badge status={r.status} />
@@ -466,7 +587,7 @@ export const StudentAttendanceHistory: React.FC = () => {
 
                         {/* Subject Details */}
                         <div className="flex items-center justify-between gap-2 mt-1">
-                          <div className="font-bold text-white text-sm">
+                          <div className="font-extrabold text-white text-sm">
                             {r.subjectName}
                           </div>
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 shrink-0">
@@ -474,7 +595,7 @@ export const StudentAttendanceHistory: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* Footer Details: Room & Biometric Punch Verification */}
+                        {/* Footer Details: Room & Biometric Verification */}
                         <div className="mt-3 pt-2.5 border-t border-slate-800/60 flex flex-wrap items-center justify-between text-[11px] text-slate-400 gap-2">
                           <div className="flex items-center gap-1">
                             <MapPin className="w-3.5 h-3.5 text-slate-500" />
@@ -483,13 +604,22 @@ export const StudentAttendanceHistory: React.FC = () => {
 
                           <div className="flex items-center gap-2">
                             {isPresent ? (
-                              <div className="flex items-center gap-1 text-emerald-400 font-mono text-[10px]">
+                              <div className="flex items-center gap-1 text-emerald-400 font-mono text-[10px] font-bold">
                                 <Scan className="w-3 h-3 text-emerald-400" />
                                 <span>Punch: {r.verificationTime || r.biometricTime || 'Verified'}</span>
                               </div>
-                            ) : (
+                            ) : isActive ? (
+                              <div className="text-cyan-400 font-mono text-[10px] font-bold flex items-center gap-1">
+                                <Radio className="w-3 h-3 text-cyan-400 animate-spin" />
+                                <span>Ready for Scanner Punch</span>
+                              </div>
+                            ) : isAbsent ? (
                               <div className="text-rose-400/80 font-mono text-[10px]">
-                                No Punch Detected
+                                No Biometric Punch Recorded
+                              </div>
+                            ) : (
+                              <div className="text-slate-500 font-mono text-[10px]">
+                                Scheduled Period
                               </div>
                             )}
 
@@ -517,11 +647,11 @@ export const StudentAttendanceHistory: React.FC = () => {
                   <th className="py-3 px-4">Period</th>
                   <th className="py-3 px-4">Subject</th>
                   <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Class Time</th>
-                  <th className="py-3 px-4">Verification Time</th>
-                  <th className="py-3 px-4">Marked By</th>
+                  <th className="py-3 px-4">Class Timing</th>
+                  <th className="py-3 px-4">Biometric Punch</th>
+                  <th className="py-3 px-4">Faculty</th>
                   <th className="py-3 px-4">Room</th>
-                  <th className="py-3 px-4 text-right">Status</th>
+                  <th className="py-3 px-4 text-right">Attendance Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
@@ -555,9 +685,17 @@ export const StudentAttendanceHistory: React.FC = () => {
                       {r.classroom}
                     </td>
                     <td className="py-3 px-4 text-right">
-                      {r.status === 'PRESENT' ? (
+                      {r.status === 'PRESENT' || r.status === 'LATE' ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Present
+                        </span>
+                      ) : r.status === 'ACTIVE' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-cyan-950 text-cyan-300 border border-cyan-600 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span> Active
+                        </span>
+                      ) : r.status === 'UPCOMING' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-900 text-slate-400 border border-slate-800">
+                          Upcoming
                         </span>
                       ) : r.status === 'ABSENT' ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-950 text-rose-400 border border-rose-800">
