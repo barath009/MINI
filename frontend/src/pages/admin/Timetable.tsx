@@ -225,10 +225,16 @@ export const AdminTimetable: React.FC = () => {
     };
 
     socket.on('timetable.updated', handleUpdate);
+    socket.on('timetable.deleted', handleUpdate);
+    socket.on('session.deleted', handleUpdate);
+    socket.on('TIMETABLE_UPDATED', handleUpdate);
     socket.on('attendance.session_status', handleUpdate);
 
     return () => {
       socket.off('timetable.updated', handleUpdate);
+      socket.off('timetable.deleted', handleUpdate);
+      socket.off('session.deleted', handleUpdate);
+      socket.off('TIMETABLE_UPDATED', handleUpdate);
       socket.off('attendance.session_status', handleUpdate);
     };
   }, [socket, selectedDate, selectedSectionId]);

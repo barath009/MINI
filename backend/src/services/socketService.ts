@@ -86,6 +86,11 @@ export const emitDeviceStatus = (deviceId: string, status: string, classroomId?:
 export const emitTimetableUpdate = (payload: any) => {
   if (!io) return;
   io.emit('TIMETABLE_UPDATED', { ...payload, timestamp: new Date() });
+  io.emit('timetable.updated', { ...payload, timestamp: new Date() });
+  if (payload.action === 'DELETE_PERIOD' || payload.action === 'DELETE_ALL_PERIODS') {
+    io.emit('timetable.deleted', { ...payload, timestamp: new Date() });
+    io.emit('session.deleted', { ...payload, timestamp: new Date() });
+  }
 };
 
 export const emitSystemTimeUpdate = (clockStatus: any) => {

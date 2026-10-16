@@ -71,6 +71,7 @@ import {
   assignTimetablePeriod,
   updateTimetablePeriod,
   deleteTimetablePeriod,
+  deleteAllTimetablePeriods,
 } from '../controllers/adminTimetableController';
 import {
   getSystemTime,
@@ -143,6 +144,7 @@ router.delete('/classrooms/:id', deleteClassroom);
 router.get('/timetable', getAdminTimetable);
 router.post('/timetable', assignTimetablePeriod);
 router.put('/timetable/:id', updateTimetablePeriod);
+router.delete('/timetable', deleteAllTimetablePeriods);
 router.delete('/timetable/:id', deleteTimetablePeriod);
 
 // Devices

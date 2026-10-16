@@ -29,12 +29,24 @@ export const FacultyDashboard: React.FC = () => {
   useEffect(() => {
     if (!socket) return;
 
-    socket.on('attendance.created', (eventPayload) => {
+    const handleRefresh = () => {
       fetchDashboard();
-    });
+    };
+
+    socket.on('attendance.created', handleRefresh);
+    socket.on('timetable.updated', handleRefresh);
+    socket.on('timetable.deleted', handleRefresh);
+    socket.on('session.deleted', handleRefresh);
+    socket.on('TIMETABLE_UPDATED', handleRefresh);
+    socket.on('attendance.session_status', handleRefresh);
 
     return () => {
-      socket.off('attendance.created');
+      socket.off('attendance.created', handleRefresh);
+      socket.off('timetable.updated', handleRefresh);
+      socket.off('timetable.deleted', handleRefresh);
+      socket.off('session.deleted', handleRefresh);
+      socket.off('TIMETABLE_UPDATED', handleRefresh);
+      socket.off('attendance.session_status', handleRefresh);
     };
   }, [socket]);
 

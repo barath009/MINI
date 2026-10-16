@@ -103,12 +103,18 @@ export const ParentTimetable: React.FC = () => {
       fetchWardTimetable();
     };
     socket.on('timetable.updated', handleUpdate);
+    socket.on('timetable.deleted', handleUpdate);
+    socket.on('session.deleted', handleUpdate);
+    socket.on('TIMETABLE_UPDATED', handleUpdate);
     socket.on('attendance.session_status', handleUpdate);
     socket.on('attendance.verified', handleUpdate);
     socket.on('attendance.marked', handleUpdate);
 
     return () => {
       socket.off('timetable.updated', handleUpdate);
+      socket.off('timetable.deleted', handleUpdate);
+      socket.off('session.deleted', handleUpdate);
+      socket.off('TIMETABLE_UPDATED', handleUpdate);
       socket.off('attendance.session_status', handleUpdate);
       socket.off('attendance.verified', handleUpdate);
       socket.off('attendance.marked', handleUpdate);

@@ -20,6 +20,8 @@ import { AuditLog } from '../models/AuditLog';
 import { SystemSetting } from '../models/SystemSetting';
 import { AttendanceEngine } from '../services/attendanceEngine';
 import { createAuditLog } from '../services/auditService';
+import { emitAttendanceEvent, emitTimetableUpdate } from '../services/socketService';
+import { normalizeCalendarDate, STANDARD_PERIODS } from './adminTimetableController';
 import { ensureFacultyAllocationsAndSessions } from './facultyController';
 import {
   registerStudentSchema,
@@ -1016,13 +1018,56 @@ export const createSession = async (req: any, res: Response, next: NextFunction)
     const data = createSessionSchema.parse(req.body);
     const sessionId = `SESS_${Date.now().toString().slice(-6)}`;
 
+    const { normalizedDate, dayOfWeek, dateStr } = normalizeCalendarDate(data.date);
+
+    // Calculate period number based on startTime if possible
+    let periodNumber = 1;
+    for (const [pNum, pInfo] of Object.entries(STANDARD_PERIODS)) {
+      if (pInfo.startTime === data.startTime) {
+        periodNumber = parseInt(pNum, 10);
+        break;
+      }
+    }
+
+    // Upsert or find Timetable entry to ensure full system synchronization across all portals
+    let timetable = await Timetable.findOne({
+      sectionId: data.sectionId,
+      date: normalizedDate,
+      startTime: data.startTime,
+    });
+
+    if (!timetable) {
+      timetable = await Timetable.create({
+        sectionId: data.sectionId,
+        subjectId: data.subjectId,
+        facultyId: data.facultyId,
+        classroomId: data.classroomId,
+        date: normalizedDate,
+        dayOfWeek,
+        periodNumber,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        academicYear: data.academicYear || '2026-2027',
+        semester: data.semester || 1,
+        status: 'ACTIVE',
+      });
+    } else {
+      if (data.subjectId) timetable.subjectId = data.subjectId as any;
+      if (data.facultyId) timetable.facultyId = data.facultyId as any;
+      if (data.classroomId) timetable.classroomId = data.classroomId as any;
+      timetable.endTime = data.endTime;
+      timetable.status = 'ACTIVE';
+      await timetable.save();
+    }
+
     const session = await AttendanceSession.create({
       sessionId,
+      timetableId: timetable._id,
       subjectId: data.subjectId,
       facultyId: data.facultyId,
       sectionId: data.sectionId,
       classroomId: data.classroomId,
-      date: new Date(data.date),
+      date: normalizedDate,
       startTime: data.startTime,
       endTime: data.endTime,
       gracePeriodMinutes: data.gracePeriodMinutes,
@@ -1038,6 +1083,14 @@ export const createSession = async (req: any, res: Response, next: NextFunction)
       .populate({ path: 'classroomId', populate: { path: 'departmentId sectionId' } });
 
     await createAuditLog(req.user._id, 'CREATE_SESSION', 'AttendanceSession', session._id.toString(), { sessionId });
+
+    emitTimetableUpdate({
+      action: 'CREATE_PERIOD',
+      sectionId: data.sectionId,
+      date: dateStr,
+      dayOfWeek,
+      entry: timetable,
+    });
 
     res.status(201).json({ success: true, message: 'Session created successfully', data: populatedSession });
   } catch (error) {
@@ -1119,10 +1172,52 @@ export const deleteAllClassrooms = async (req: any, res: Response, next: NextFun
 export const deleteSession = async (req: any, res: Response, next: NextFunction) => {
   try {
     const { id } = req.params;
-    await AttendanceSession.findByIdAndDelete(id);
-    await AttendanceRecord.deleteMany({ sessionId: id });
+    let session = await AttendanceSession.findById(id);
+    if (!session) {
+      session = await AttendanceSession.findOne({ sessionId: id });
+    }
+
+    let timetableId = session?.timetableId;
+    let sectionId = session?.sectionId;
+    let date = session?.date;
+    let startTime = session?.startTime;
+
+    if (session) {
+      await AttendanceRecord.deleteMany({ sessionId: session._id });
+      await AttendanceSession.findByIdAndDelete(session._id);
+    }
+
+    if (timetableId) {
+      await Timetable.findByIdAndDelete(timetableId);
+      await AttendanceRecord.deleteMany({ timetableId });
+    } else if (sectionId && date && startTime) {
+      const { normalizedDate } = normalizeCalendarDate(date);
+      const matchingTimetable = await Timetable.findOne({
+        sectionId,
+        date: normalizedDate,
+        startTime,
+      });
+      if (matchingTimetable) {
+        await Timetable.findByIdAndDelete(matchingTimetable._id);
+        await AttendanceRecord.deleteMany({ timetableId: matchingTimetable._id });
+      }
+    }
+
     await createAuditLog(req.user._id, 'DELETE_SESSION', 'AttendanceSession', id);
-    res.status(200).json({ success: true, message: 'Classroom time slot session removed successfully.' });
+
+    // Notify ALL clients (student, faculty, admin, parent) via websockets immediately
+    emitAttendanceEvent('session.deleted', { sessionId: id, timetableId });
+    emitAttendanceEvent('attendance.session_status', { sessionId: id, status: 'DELETED' });
+    emitAttendanceEvent('attendance.marked', { sessionId: id, deleted: true });
+    emitAttendanceEvent('attendance.updated', { sessionId: id, deleted: true });
+    emitTimetableUpdate({
+      action: 'DELETE_PERIOD',
+      id: timetableId || id,
+      sessionId: id,
+      sectionId,
+    });
+
+    res.status(200).json({ success: true, message: 'Classroom time slot session and timetable entry removed successfully across all portals.' });
   } catch (error) {
     next(error);
   }
@@ -1140,21 +1235,37 @@ export const deleteAllSessions = async (req: any, res: Response, next: NextFunct
       filter.sectionId = sectionId;
     }
 
-    const sessionsToDelete = await AttendanceSession.find(filter).select('_id');
-    const sessionIds = sessionsToDelete.map((s) => s._id);
+    const sessionsToDelete = await AttendanceSession.find(filter).lean();
+    const sessionIds = sessionsToDelete.map((s: any) => s._id);
+    const timetableIds = sessionsToDelete.map((s: any) => s.timetableId).filter(Boolean);
 
     const result = await AttendanceSession.deleteMany(filter);
     if (sessionIds.length > 0) {
       await AttendanceRecord.deleteMany({ sessionId: { $in: sessionIds } });
     }
 
+    if (timetableIds.length > 0) {
+      await Timetable.deleteMany({ _id: { $in: timetableIds } });
+      await AttendanceRecord.deleteMany({ timetableId: { $in: timetableIds } });
+    } else if (sectionId) {
+      await Timetable.deleteMany({ sectionId });
+      await AttendanceRecord.deleteMany({ sectionId });
+    }
+
     await createAuditLog(req.user._id, 'DELETE_ALL_SESSIONS', 'AttendanceSession', 'ALL', {
       deletedCount: result.deletedCount,
     });
 
+    emitAttendanceEvent('session.deleted', { sessionIds, count: result.deletedCount });
+    emitTimetableUpdate({
+      action: 'DELETE_ALL_PERIODS',
+      sessionIds,
+      sectionId,
+    });
+
     res.status(200).json({
       success: true,
-      message: `Successfully removed ${result.deletedCount} time slot session(s).`,
+      message: `Successfully removed ${result.deletedCount} time slot session(s) and corresponding timetable entries across all portals.`,
       deletedCount: result.deletedCount,
     });
   } catch (error) {

@@ -7,6 +7,7 @@ import { Subject } from '../models/Subject';
 import { Faculty } from '../models/Faculty';
 import { Classroom } from '../models/Classroom';
 import { AttendanceSession } from '../models/AttendanceSession';
+import { AttendanceRecord } from '../models/AttendanceRecord';
 import { createAuditLog } from '../services/auditService';
 import { emitTimetableUpdate } from '../services/socketService';
 import { ensureSessionForScheduledClass } from '../services/sessionService';
@@ -450,13 +451,29 @@ export const deleteTimetablePeriod = async (req: any, res: Response, next: NextF
     const dayOfWeek = entry.dayOfWeek;
     const periodNum = entry.periodNumber;
 
-    // Delete or cancel linked session
-    await AttendanceSession.deleteMany({ timetableId: entry._id, status: { $in: ['SCHEDULED', 'UPCOMING'] } });
+    // Find all linked AttendanceSessions (by timetableId OR by sectionId + date + startTime)
+    const linkedSessions = await AttendanceSession.find({
+      $or: [
+        { timetableId: entry._id },
+        { sectionId: entry.sectionId, date: entry.date, startTime: entry.startTime },
+      ],
+    }).select('_id');
+    const sessionIds = linkedSessions.map((s) => s._id);
 
+    // Delete ALL linked sessions regardless of status (SCHEDULED, UPCOMING, ACTIVE, COMPLETED, etc.)
+    if (sessionIds.length > 0) {
+      await AttendanceSession.deleteMany({ _id: { $in: sessionIds } });
+      await AttendanceRecord.deleteMany({ sessionId: { $in: sessionIds } });
+    }
+    // Delete any attendance records directly linked to this timetableId
+    await AttendanceRecord.deleteMany({ timetableId: entry._id });
+
+    // Delete Timetable entry
     await Timetable.findByIdAndDelete(id);
 
-    await createAuditLog(req.user._id, 'DELETE_TIMETABLE_PERIOD', 'Timetable', id, { sectionId, dateStr, dayOfWeek, periodNum }, req.ip);
+    await createAuditLog(req.user._id, 'DELETE_TIMETABLE_PERIOD', 'Timetable', id, { sectionId, dateStr, dayOfWeek, periodNum, sessionIds }, req.ip);
 
+    // Notify ALL clients via socket
     emitTimetableUpdate({
       action: 'DELETE_PERIOD',
       id,
@@ -464,11 +481,71 @@ export const deleteTimetablePeriod = async (req: any, res: Response, next: NextF
       date: dateStr,
       dayOfWeek,
       periodNumber: periodNum,
+      sessionIds,
     });
 
     res.status(200).json({
       success: true,
-      message: 'Timetable period slot removed successfully.',
+      message: 'Timetable period slot and all associated sessions/records removed successfully across all portals.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const deleteAllTimetablePeriods = async (req: any, res: Response, next: NextFunction) => {
+  try {
+    const { sectionId, date } = req.query;
+    const ids = req.body?.ids;
+
+    let filter: any = {};
+    if (Array.isArray(ids) && ids.length > 0) {
+      filter._id = { $in: ids };
+    } else {
+      if (sectionId) filter.sectionId = sectionId;
+      if (date) {
+        const { normalizedDate } = normalizeCalendarDate(date as string);
+        filter.date = normalizedDate;
+      }
+    }
+
+    const entries = await Timetable.find(filter).select('_id sectionId date startTime');
+    const timetableIds = entries.map((e) => e._id);
+
+    if (timetableIds.length > 0) {
+      const linkedSessions = await AttendanceSession.find({
+        $or: [
+          { timetableId: { $in: timetableIds } },
+          ...(sectionId ? [{ sectionId }] : []),
+        ],
+      }).select('_id');
+      const sessionIds = linkedSessions.map((s) => s._id);
+
+      if (sessionIds.length > 0) {
+        await AttendanceSession.deleteMany({ _id: { $in: sessionIds } });
+        await AttendanceRecord.deleteMany({ sessionId: { $in: sessionIds } });
+      }
+      await AttendanceRecord.deleteMany({ timetableId: { $in: timetableIds } });
+      await Timetable.deleteMany({ _id: { $in: timetableIds } });
+    }
+
+    await createAuditLog(req.user._id, 'DELETE_ALL_TIMETABLE_PERIODS', 'Timetable', 'ALL', {
+      deletedCount: timetableIds.length,
+      sectionId,
+      date,
+    });
+
+    emitTimetableUpdate({
+      action: 'DELETE_ALL_PERIODS',
+      sectionId,
+      date,
+      count: timetableIds.length,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Successfully removed ${timetableIds.length} timetable period(s) and all linked sessions.`,
+      deletedCount: timetableIds.length,
     });
   } catch (error) {
     next(error);

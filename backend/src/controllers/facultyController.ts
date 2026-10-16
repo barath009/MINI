@@ -20,38 +20,8 @@ import { clockService } from '../services/clockService';
 import { normalizeCalendarDate } from './adminTimetableController';
 
 export const ensureFacultyAllocationsAndSessions = async (facultyId: any, departmentId?: any) => {
-  try {
-    // Ensure AttendanceSession for today if faculty has none
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todaySessions = await AttendanceSession.find({
-      facultyId,
-      date: { $gte: todayStart },
-    });
-
-    if (todaySessions.length === 0) {
-      const classroom = await Classroom.findOne();
-      const subject = await Subject.findOne();
-      const section = await Section.findOne();
-
-      if (classroom) {
-        await AttendanceSession.create({
-          sessionId: `SESS_${Date.now().toString().slice(-6)}_${Math.floor(Math.random() * 100)}`,
-          facultyId,
-          subjectId: subject?._id,
-          sectionId: section?._id,
-          classroomId: classroom._id,
-          date: new Date(),
-          startTime: '09:00',
-          endTime: '17:00',
-          status: 'ACTIVE',
-          academicYear: '2026-2027',
-        });
-      }
-    }
-  } catch (err) {
-    console.error('Error ensuring faculty sessions:', err);
-  }
+  // Deliberately no-op dummy session generation.
+  // Sessions must strictly originate from Admin scheduling or published Timetable.
 };
 
 export const getFacultyDashboard = async (req: any, res: Response, next: NextFunction) => {
@@ -66,13 +36,15 @@ export const getFacultyDashboard = async (req: any, res: Response, next: NextFun
     const allocations = await ClassAllocation.find({ facultyId: faculty._id, status: 'ACTIVE' });
     const allocatedStudentIds = [...new Set(allocations.map((a) => a.studentId.toString()))];
 
-    // Today's active session
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    // Today's active session based on effective calendar date
+    const effectiveNow = clockService.getEffectiveNow();
+    const { normalizedDate: todayStart } = normalizeCalendarDate(effectiveNow);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setUTCHours(23, 59, 59, 999);
 
     const todaySessions = await AttendanceSession.find({
       facultyId: faculty._id,
-      date: { $gte: today },
+      date: { $gte: todayStart, $lte: todayEnd },
     })
       .populate('subjectId')
       .populate('sectionId')
@@ -86,25 +58,22 @@ export const getFacultyDashboard = async (req: any, res: Response, next: NextFun
     let liveArrivals: any[] = [];
     let deviceStatus = 'ONLINE';
 
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
     if (allocatedStudentIds.length > 0) {
       presentToday = await AttendanceRecord.countDocuments({
         studentId: { $in: allocatedStudentIds },
-        date: { $gte: todayStart },
+        date: { $gte: todayStart, $lte: todayEnd },
         status: 'PRESENT',
       });
       lateToday = await AttendanceRecord.countDocuments({
         studentId: { $in: allocatedStudentIds },
-        date: { $gte: todayStart },
+        date: { $gte: todayStart, $lte: todayEnd },
         status: 'LATE',
       });
       absentToday = allocatedStudentIds.length - (presentToday + lateToday);
 
       liveArrivals = await AttendanceRecord.find({
         studentId: { $in: allocatedStudentIds },
-        date: { $gte: todayStart },
+        date: { $gte: todayStart, $lte: todayEnd },
       })
         .sort({ timestamp: -1 })
         .limit(10)
